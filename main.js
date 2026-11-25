@@ -361,15 +361,23 @@ setInterval(() => {
 
 // ---------- bateria dos aparelhos Bluetooth (fones, mouse, controle) ----------
 let btLast = '';
-function btBatteryLoop() {
-  const script = path.join(__dirname, 'btbattery.ps1').replace('app.asar', 'app.asar.unpacked');
-  require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, timeout: 30000 }, (err, out) => {
+// roda um script de bateria e devolve a lista [{ name, battery, charging, kind }]
+function runBatteryScript(file, kind) {
+  const script = path.join(__dirname, file).replace('app.asar', 'app.asar.unpacked');
+  return new Promise(resolve => require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, timeout: 30000 }, (err, out) => {
     let list = []; try { list = JSON.parse(String(out).trim() || '[]'); if (!Array.isArray(list)) list = [list]; } catch (_) {}
-    const sig = JSON.stringify(list);
-    if (sig !== btLast) { btLast = sig; send('btbat', list); }
-    setTimeout(btBatteryLoop, 45000);
-  });
+    resolve(list.filter(d => d && typeof d.battery === 'number').map(d => ({ kind, ...d })));
+  }));
 }
+// Bluetooth (pelo Windows) + receptores próprios (Logitech LIGHTSPEED, HyperX), a cada 45 s
+async function btBatteryLoop() {
+  const [bt, hid] = await Promise.all([runBatteryScript('btbattery.ps1', 'bt'), runBatteryScript('hidbattery.ps1', 'hid')]);
+  const list = [...hid, ...bt];
+  const sig = JSON.stringify(list);
+  if (sig !== btLast) { btLast = sig; send('btbat', list); }
+  setTimeout(btBatteryLoop, 45000);
+}
+ipcMain.handle('peripherals', () => { try { return JSON.parse(btLast || '[]'); } catch (_) { return []; } });
 
 // ---------- downloads ao vivo (Chrome/Edge: .crdownload, Firefox: .part) ----------
 const dl = { active: new Map(), watching: false, lastEvent: 0, timer: null };

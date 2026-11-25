@@ -30,12 +30,14 @@
       "preload.js",
       "helper.ps1",
       "btbattery.ps1",
+      "hidbattery.ps1",
       "renderer/**",
       "package.json"
     ],
     "asarUnpack": [
       "helper.ps1",
-      "btbattery.ps1"
+      "btbattery.ps1",
+      "hidbattery.ps1"
     ],
     "win": {
       "target": [

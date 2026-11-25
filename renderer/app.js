@@ -1119,14 +1119,31 @@ $('#bright').addEventListener('input', e => {
 function askBright() { if (Date.now() - brightAsked > 60000) { brightAsked = Date.now(); window.ilha.media('bright'); } }
 
 /* ---- bateria dos aparelhos Bluetooth ---- */
-window.ilha.onBtBat(list => {
+// periféricos: Bluetooth + fone/mouse com receptor próprio (HyperX, Logitech)
+const lowWarned = new Set();
+function onPeripherals(list) {
   const prev = new Set((S.btBat || []).map(d => d.name));
+  const first = S.btBat === undefined;
   S.btBat = list;
-  const first = list[0];
-  if (first) { $('#ql-bt').textContent = `${first.name.split(' ')[0]} ${first.battery}% ›`; $('#ql-bt').title = list.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
+  const bt = list.filter(d => d.kind === 'bt');
+  if (bt[0]) { $('#ql-bt').textContent = `${bt[0].name.split(' ')[0]} ${bt[0].battery}% ›`; $('#ql-bt').title = bt.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
   else { $('#ql-bt').textContent = 'Bluetooth ›'; $('#ql-bt').title = 'Ver os dispositivos Bluetooth'; }
-  for (const d of list) if (!prev.has(d.name) && S.btBat !== null) notice('head', '#0a84ff', d.name, `Bateria ${d.battery}%`, 4000);
-});
+  // no PC de mesa (sem bateria), o 3º anel do Início mostra o periférico com menos bateria
+  if (!S.battery && list.length) {
+    const low = [...list].sort((a, b) => a.battery - b.battery)[0];
+    setRing('ring-bat', low.battery, low.battery + '%');
+    $('#ring-bat span').textContent = low.kind === 'headset' ? 'Fone' : low.kind === 'mouse' ? 'Mouse' : low.name.split(' ')[0];
+    $('#ring-bat').style.setProperty('--c', low.battery <= 15 ? '#ff453a' : low.battery <= 35 ? '#ff9f0a' : '#30d158');
+    $('#ring-bat').title = list.map(d => `${d.name}: ${d.battery}%${d.charging ? ' (carregando)' : ''}`).join('\n');
+  }
+  for (const d of list) {
+    if (!first && !prev.has(d.name)) notice('head', '#0a84ff', d.name, `Bateria ${d.battery}%`, 4000);
+    if (d.battery <= 15 && !d.charging && !lowWarned.has(d.name)) { lowWarned.add(d.name); notice('head', '#ff453a', 'Bateria fraca', `${d.name}: ${d.battery}%`, 6000); }
+    if (d.battery > 20) lowWarned.delete(d.name);
+  }
+}
+window.ilha.onBtBat(onPeripherals);
+window.ilha.peripherals().then(l => { if (l?.length) onPeripherals(l); }).catch(() => {});
 
 /* ---- downloads ao vivo ---- */
 window.ilha.onDownload(m => {
