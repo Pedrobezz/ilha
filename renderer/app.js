@@ -2,7 +2,7 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const isl = $('#island');
 const WIN_W = 900;
-const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 540] };
+const SIZES = { home: [790, 346], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 540] };
 const FLOAT_GAP = 8; // distância do topo no estilo flutuante
 const COLLAPSED = [196, 32];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -63,6 +63,8 @@ function close() {
   clearTimeout(openT); clearTimeout(closeT);
   if (S.focused) { S.focused = false; document.activeElement?.blur(); window.ilha.focus(false); }
   if (S.open) { S.open = false; render(); }
+  // painéis sobrepostos fecham junto com a ilha
+  $$('.forecast.show').forEach(f => f.classList.remove('show'));
 }
 window.ilha.onHover(h => {
   S.hover = h;
@@ -676,7 +678,9 @@ function renderClaude() {
   clRing('cl-seven', L?.seven?.p, resetIn(L?.seven?.reset));
   clRing('cl-ctx', c.ctx?.p, c.ctx?.size ? `de ${fmtTok(c.ctx.size)}` : '');
   $('#cl-model').textContent = c.model || '';
-  $('#cl-hint').textContent = L ? `Atualizado ${ago(L.at)}` : 'Os limites chegam a cada resposta do Claude Code.';
+  // 5 h e semanal só chegam pela linha de status, que o Claude Code do terminal executa (o app do desktop não)
+  $('#cl-hint').textContent = L ? `Atualizado ${ago(L.at)}` : 'Sessão e semanal aparecem quando você usa o Claude Code no terminal. No app do desktop, veja em Configurações → Uso.';
+  $('#cl-ctx small').textContent = c.ctx?.size ? `de ${fmtTok(c.ctx.size)}${c.ctx.est ? ' (aprox.)' : ''}` : '';
   renderClaudeExtras(c);
   $('#cl-log').innerHTML = (c.log || []).length ? c.log.map(l => `<div class="cl-item"><em>${new Date(l.t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</em><span title="${esc(l.project)}">${esc(l.text)}</span></div>`).join('')
     : '<div class="out-empty">Nada ainda.</div>';

@@ -804,3 +804,12 @@ body.dragging .drop-hint { opacity: 1; }
 .dring.chg .dring-svg circle.v { animation: chg-glow 2s ease-in-out infinite; }
 @keyframes chg-glow { 50% { filter: drop-shadow(0 0 4px #30d158); } }
 @keyframes bolt-in { from { transform: scale(0); } }
+
+/* painéis sobre o Início (previsão, agenda): fundo sólido e o conteúdo de baixo some enquanto estão abertos */
+.forecast { background: rgb(27, 27, 32); }
+.page[data-page="home"] .home-grid { transition: opacity .25s ease, filter .25s ease; }
+.page[data-page="home"]:has(.forecast.show) .home-grid { opacity: 0; filter: blur(4px); pointer-events: none; }
+/* com a ilha fechada, nada das abas pode aparecer (nem painéis que ficaram abertos) */
+#island .pages { visibility: hidden; transition: visibility 0s .24s; }
+#island.expanded .pages { visibility: visible; transition: visibility 0s; }
+#island:not(.expanded) .forecast { display: none !important; }

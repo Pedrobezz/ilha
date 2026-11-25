@@ -289,10 +289,17 @@ function readTranscript(s) {
       const id = m.id || o.uuid; if (s.seen.has(id)) continue; s.seen.add(id);
       s.tokens.in += u.input_tokens || 0; s.tokens.out += u.output_tokens || 0;
       s.tokens.cw += u.cache_creation_input_tokens || 0; s.tokens.cr += u.cache_read_input_tokens || 0;
+      // contexto em uso = tudo o que a última resposta leu (entrada + cache)
+      s.ctxTokens = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+      if (m.model) s.model = String(m.model);
     }
   } catch (_) {}
 }
-const spent = t => t.in + t.out + t.cw; // tokens novos (sem contar leitura de cache)
+const spent = t => t.in + t.out + t.cw;
+// janela de contexto pelo modelo (Opus/Sonnet 5 e variantes [1m]: 1 milhão; outros: 200 mil)
+const ctxWindow = m => /\[1m\]|opus-5|sonnet-5|fable/i.test(String(m || '')) ? 1e6 : 2e5;
+function ctxFromTranscript(s) { if (!s?.ctxTokens) return null; const size = ctxWindow(s.model); return { p: Math.min(100, 100 * s.ctxTokens / size), size, est: true }; }
+const prettyModel = m => { const x = /claude-([a-z]+)-(\d+)-(\d+)/.exec(String(m || '')); return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : ''; };
 function claudeSummary() {
   const s = claude.current && claude.sessions.get(claude.current);
   const working = [...claude.sessions.values()].filter(x => x.working);
@@ -300,7 +307,7 @@ function claudeSummary() {
     working: !!s?.working, project: s?.project || '', activity: s?.activity || '', startedAt: s?.startedAt || 0, endedAt: s?.endedAt || 0,
     tokensTask: s && s.taskBase ? spent(s.tokens) - s.taskBase.spent : 0, outTask: s && s.taskBase ? s.tokens.out - s.taskBase.out : 0,
     tokensSession: s ? spent(s.tokens) : 0, cacheSession: s ? s.tokens.cr : 0,
-    limits: claude.limits, ctx: claude.ctx, model: claude.model, active: working.length, log: claude.log.slice(0, 12),
+    limits: claude.limits, ctx: claude.ctx || ctxFromTranscript(s), model: claude.model || prettyModel(s?.model), active: working.length, log: claude.log.slice(0, 12),
     today: dayStats(), gh: gh.list, ghOk: gh.ok,
   };
 }
