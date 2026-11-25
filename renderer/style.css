@@ -753,6 +753,37 @@ body.dragging .drop-hint { opacity: 1; }
 #cmd-open:hover { background: rgba(255, 255, 255, .1); color: var(--t1); }
 #cmd-open svg { width: 15px; height: 15px; }
 
+/* conversor em círculo */
+/* (o modo se chama "convring" porque ".ring" já é dos anéis de bateria) */
+#island.convring { --r: 30px; --er: 16px; box-shadow: 0 24px 60px -14px rgba(0, 0, 0, .75); }
+#island.float.convring { --r: 30px; }
+#ring { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+#island.convring #ring { opacity: 1; pointer-events: auto; transition: opacity .3s ease .1s; }
+.ring-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 230px; display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; transition: top .45s var(--spring); }
+#ring.hold .ring-center { top: 50%; flex-direction: row; width: auto; gap: 10px; white-space: nowrap; }
+.rc-ic { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; background: rgba(255, 255, 255, .08); flex: none; overflow: hidden; }
+#ring.hold .rc-ic { width: 30px; height: 30px; border-radius: 9px; }
+.rc-ic svg { width: 26px; height: 26px; }
+#ring.hold .rc-ic svg { width: 17px; height: 17px; }
+.rc-ic img { width: 100%; height: 100%; object-fit: cover; }
+.rc-t { font-size: 13.5px; font-weight: 600; max-width: 230px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+#ring.hold .rc-t { display: block; white-space: nowrap; text-overflow: ellipsis; max-width: 220px; }
+.rc-s { font-size: 11px; color: var(--t3); }
+.rc-txt { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+#ring.hold .rc-txt { align-items: flex-start; }
+.ring-opts { position: absolute; inset: 0; pointer-events: none; }
+.ring-opt { position: absolute; width: 74px; height: 74px; margin: -37px 0 0 -37px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1); color: var(--t1); pointer-events: auto;
+  opacity: 0; transform: scale(.3); transition: transform .45s var(--spring), opacity .25s ease, background .15s, box-shadow .15s; }
+#ring.open .ring-opt { opacity: 1; transform: none; }
+.ring-opt b { font-size: 14px; font-weight: 700; letter-spacing: .01em; }
+.ring-opt small { font-size: 9.5px; color: var(--t3); font-weight: 600; text-transform: lowercase; }
+.ring-opt svg { width: 20px; height: 20px; }
+.ring-opt.on, .ring-opt:hover { background: var(--oc, #0a84ff); box-shadow: 0 0 0 4px color-mix(in srgb, var(--oc, #0a84ff) 30%, transparent), 0 8px 22px -6px var(--oc, #0a84ff); transform: scale(1.12); }
+.ring-opt.on small, .ring-opt:hover small { color: rgba(255, 255, 255, .85); }
+.ring-opt.off { opacity: .38 !important; }
+.ring-opt.off.on, .ring-opt.off:hover { background: rgba(255, 255, 255, .12); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2); transform: scale(1.04); }
+
 /* Claude Code ainda não conectado: o cartão mostra o botão no lugar dos números */
 .cl-connect { display: none; }
 #cl-now.disconnected .cl-stats, #cl-now.disconnected .cl-today { display: none; }

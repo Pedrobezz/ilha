@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; script-src 'self' 'unsafe-inline'">
+<title>Ilha · conversor</title>
+</head>
+<body>
+<script>
+// Converte imagens com o próprio Chromium (sem programas extras):
+// decodifica JPG, PNG, WEBP, GIF, BMP, ICO, AVIF e SVG, e grava PNG, JPG, WEBP, BMP ou ICO.
+// A orientação das fotos de celular (EXIF) já vem aplicada pelo navegador.
+const load = (bytes, mime) => new Promise((resolve, reject) => {
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime || '' }));
+  const img = new Image();
+  img.onload = () => resolve({ img, url });
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não consegui abrir a imagem')); };
+  img.src = url;
+});
+function draw(img, w, h, bg) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h); } // JPG não tem transparência: fundo branco
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  return c;
+}
+const toBytes = (c, type, q) => new Promise((res, rej) => c.toBlob(b => (b ? b.arrayBuffer().then(a => res(new Uint8Array(a))) : rej(new Error('Formato não suportado'))), type, q));
+// BMP de 24 bits
+function bmp(c) {
+  const { width: w, height: h } = c, d = c.getContext('2d').getImageData(0, 0, w, h).data;
+  const row = Math.ceil(w * 3 / 4) * 4, size = 54 + row * h, b = new Uint8Array(size), v = new DataView(b.buffer);
+  b[0] = 66; b[1] = 77; v.setUint32(2, size, true); v.setUint32(10, 54, true); v.setUint32(14, 40, true);
+  v.setInt32(18, w, true); v.setInt32(22, h, true); v.setUint16(26, 1, true); v.setUint16(28, 24, true); v.setUint32(34, row * h, true);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const s = ((h - 1 - y) * w + x) * 4, t = 54 + y * row + x * 3, a = d[s + 3] / 255;
+    b[t] = d[s + 2] * a + 255 * (1 - a); b[t + 1] = d[s + 1] * a + 255 * (1 - a); b[t + 2] = d[s] * a + 255 * (1 - a);
+  }
+  return b;
+}
+// ICO com vários tamanhos (PNG dentro), quadrado e centralizado
+async function ico(img) {
+  const sizes = [256, 128, 64, 48, 32, 16], pngs = [];
+  for (const s of sizes) {
+    const c = document.createElement('canvas'); c.width = c.height = s;
+    const k = Math.min(s / img.naturalWidth, s / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
+    const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
+    pngs.push(await toBytes(c, 'image/png'));
+  }
+  const head = 6 + 16 * sizes.length, total = head + pngs.reduce((a, p) => a + p.length, 0);
+  const b = new Uint8Array(total), v = new DataView(b.buffer);
+  v.setUint16(2, 1, true); v.setUint16(4, sizes.length, true);
+  let off = head;
+  sizes.forEach((s, i) => {
+    const e = 6 + 16 * i;
+    b[e] = s >= 256 ? 0 : s; b[e + 1] = s >= 256 ? 0 : s; v.setUint16(e + 4, 1, true); v.setUint16(e + 6, 32, true);
+    v.setUint32(e + 8, pngs[i].length, true); v.setUint32(e + 12, off, true);
+    b.set(pngs[i], off); off += pngs[i].length;
+  });
+  return b;
+}
+window.conv.onJob(async job => {
+  let url;
+  try {
+    const r = await load(job.bytes, job.mime); url = r.url;
+    const img = r.img;
+    let w = img.naturalWidth || 1024, h = img.naturalHeight || 1024;
+    if (job.maxSide && Math.max(w, h) > job.maxSide) { const k = job.maxSide / Math.max(w, h); w = Math.round(w * k); h = Math.round(h * k); }
+    let out;
+    if (job.fmt === 'ico') out = await ico(img);
+    else if (job.fmt === 'bmp') out = bmp(draw(img, w, h));
+    else if (job.fmt === 'jpg') out = await toBytes(draw(img, w, h, '#fff'), 'image/jpeg', job.quality ?? 0.92);
+    else if (job.fmt === 'webp') out = await toBytes(draw(img, w, h), 'image/webp', job.quality ?? 0.9);
+    else out = await toBytes(draw(img, w, h), 'image/png');
+    window.conv.done(job.id, { ok: true, data: out, w, h });
+  } catch (e) { window.conv.done(job.id, { ok: false, error: e.message }); }
+  finally { if (url) URL.revokeObjectURL(url); }
+});
+</script>
+</body>
+</html>

@@ -744,6 +744,191 @@ async function searchFiles(q, limit = 8) {
   return scored.slice(0, limit);
 }
 
+// ---------- conversor de arquivos ----------
+// Fotos: o próprio Chromium converte, numa janela escondida (a ilha não trava). HEIC e TIFF passam antes pelo leitor do Windows.
+// PDF: juntar e fotos → PDF com a pdf-lib; PDF → imagens pelo leitor de PDF do Windows.
+// Office → PDF: Microsoft Office em segundo plano, senão LibreOffice. Detecta na hora: instalou, já funciona.
+const IMG_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.ico', '.avif', '.svg', '.heic', '.heif', '.tif', '.tiff', '.jfif'];
+const VIA_WINDOWS = ['.heic', '.heif', '.tif', '.tiff'];
+const OFFICE_KIND = { '.doc': 'word', '.docx': 'word', '.odt': 'word', '.rtf': 'word', '.xls': 'excel', '.xlsx': 'excel', '.ods': 'excel', '.csv': 'excel', '.ppt': 'ppt', '.pptx': 'ppt', '.odp': 'ppt' };
+const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.jfif': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.svg': 'image/svg+xml' };
+const conv = { win: null, jobs: new Map(), queue: [], busy: false, engines: null, enginesAt: 0 };
+const CONV_PS1 = () => path.join(__dirname, 'convert.ps1').replace('app.asar', 'app.asar.unpacked');
+function convWindow() {
+  if (conv.win && !conv.win.isDestroyed()) return conv.ready;
+  conv.win = new BrowserWindow({ show: false, width: 200, height: 200, skipTaskbar: true, webPreferences: { preload: path.join(__dirname, 'convert-preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  conv.ready = new Promise(r => conv.win.webContents.once('did-finish-load', r));
+  conv.win.loadFile(path.join(__dirname, 'renderer', 'convert.html'));
+  conv.win.on('closed', () => { conv.win = null; });
+  return conv.ready;
+}
+ipcMain.on('conv:result', (e, r) => {
+  if (!conv.win || e.sender !== conv.win.webContents) return;
+  const j = conv.jobs.get(r.id); if (!j) return;
+  conv.jobs.delete(r.id); r.ok ? j.resolve(r) : j.reject(new Error(r.error || 'Falhou'));
+});
+async function imageJob(bytes, mime, fmt, opts = {}) {
+  await convWindow();
+  const id = require('crypto').randomBytes(6).toString('hex');
+  return new Promise((resolve, reject) => {
+    conv.jobs.set(id, { resolve, reject });
+    conv.win.webContents.send('job', { id, bytes, mime, fmt, quality: opts.quality, maxSide: opts.maxSide });
+    setTimeout(() => { if (conv.jobs.delete(id)) reject(new Error('Demorou demais')); }, 60000);
+  });
+}
+// roda o convert.ps1 (um processo por conversão); onLine recebe as mensagens de progresso
+function runConvPs(args, onLine, timeout = 180000) {
+  return new Promise(resolve => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', CONV_PS1(), ...args], { windowsHide: true });
+    let buf = '', last = { ok: false, error: 'Não respondeu' };
+    const t = setTimeout(() => { try { p.kill(); } catch (_) {} }, timeout);
+    p.stdout.setEncoding('utf8');
+    p.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1); try { const m = JSON.parse(l); if ('ok' in m) last = m; else onLine?.(m); } catch (_) {} } });
+    p.on('error', () => { clearTimeout(t); resolve({ ok: false, error: 'Não consegui abrir o PowerShell' }); });
+    p.on('exit', () => { clearTimeout(t); resolve(last); });
+  });
+}
+function findSoffice() {
+  const pf = process.env.ProgramFiles || 'C:\\Program Files', pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  return [path.join(pf, 'LibreOffice', 'program', 'soffice.exe'), path.join(pf86, 'LibreOffice', 'program', 'soffice.exe')].find(p => fs.existsSync(p)) || '';
+}
+async function officeEngines(force) {
+  if (!force && conv.engines && Date.now() - conv.enginesAt < 60000) return conv.engines;
+  const ms = await runConvPs(['-Mode', 'engines'], null, 20000);
+  conv.engines = { word: !!ms.word, excel: !!ms.excel, ppt: !!ms.ppt, libre: !!findSoffice() };
+  conv.enginesAt = Date.now();
+  return conv.engines;
+}
+// nome do arquivo novo ao lado do original, sem sobrescrever nada: "foto.png", "foto (1).png"…
+function freeName(dir, base, ext) {
+  let p = path.join(dir, base + ext), i = 1;
+  while (fs.existsSync(p)) p = path.join(dir, `${base} (${i++})${ext}`);
+  return p;
+}
+async function saveNear(src, base, ext, data) {
+  for (const dir of [path.dirname(src), app.getPath('downloads')]) {
+    const p = freeName(dir, base, ext);
+    try { await fs.promises.writeFile(p, data); return p; } catch (_) {} // pasta sem permissão: vai para Downloads
+  }
+  throw new Error('Não consegui salvar o arquivo');
+}
+const stem = p => path.basename(p, path.extname(p));
+// imagem → bytes de PNG/JPG prontos (passa pelo Windows se for HEIC/TIFF)
+async function readImage(src) {
+  const ext = path.extname(src).toLowerCase();
+  if (!VIA_WINDOWS.includes(ext)) return { bytes: await fs.promises.readFile(src), mime: MIME[ext] || '' };
+  const tmp = path.join(os.tmpdir(), `ilha-conv-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+  const r = await runConvPs(['-Mode', 'topng', '-Src', src, '-Dst', tmp], null, 60000);
+  if (!r.ok) throw new Error(/HEIF|0x88982F50|componente/i.test(r.error || '') ? 'O Windows não abre esse formato (instale a Extensão de Imagem HEIF na Microsoft Store)' : 'O Windows não conseguiu abrir a imagem');
+  const bytes = await fs.promises.readFile(tmp); fs.promises.unlink(tmp).catch(() => {});
+  return { bytes, mime: 'image/png' };
+}
+const IMG_OUT = { png: '.png', jpg: '.jpg', webp: '.webp', ico: '.ico', bmp: '.bmp' };
+async function convertOne(src, op, progress) {
+  const ext = path.extname(src).toLowerCase();
+  if (IMG_OUT[op]) {
+    const { bytes, mime } = await readImage(src);
+    const r = await imageJob(bytes, mime, op);
+    return [await saveNear(src, stem(src), IMG_OUT[op], Buffer.from(r.data))];
+  }
+  if (op === 'compress') {
+    const { bytes, mime } = await readImage(src);
+    const r = await imageJob(bytes, mime, 'jpg', { quality: 0.8, maxSide: 2560 });
+    // não ficou menor: não cria um arquivo à toa
+    if (r.data.length >= fs.statSync(src).size * 0.95) { const e = new Error('Essa foto já está leve: diminuir não ajudaria'); e.info = true; throw e; }
+    return [await saveNear(src, stem(src) + ' (menor)', '.jpg', Buffer.from(r.data))];
+  }
+  if (op === 'pdf2png') {
+    const dir = freeName(path.dirname(src), stem(src) + ' (páginas)', '');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { throw new Error('Não consegui criar a pasta das páginas'); }
+    const r = await runConvPs(['-Mode', 'pdf2png', '-Src', src, '-Dst', dir, '-Kind', stem(src) + ' - página'], m => progress?.(`página ${m.page} de ${m.total}`), 600000);
+    if (!r.ok) { try { fs.rmdirSync(dir); } catch (_) {} throw new Error(/password|senha|protect/i.test(r.error || '') ? 'O PDF tem senha' : 'Não consegui ler o PDF'); }
+    return [dir];
+  }
+  if (op === 'office2pdf' || op === 'pdf2docx') {
+    const kind = op === 'pdf2docx' ? 'pdf2docx' : OFFICE_KIND[ext];
+    if (!kind) throw new Error('Esse arquivo não é do Office');
+    const eng = await officeEngines();
+    const outExt = op === 'pdf2docx' ? '.docx' : '.pdf';
+    const msApp = kind === 'pdf2docx' || kind === 'word' ? eng.word : kind === 'excel' ? eng.excel : eng.ppt;
+    if (msApp && !(['.odt', '.ods', '.odp'].includes(ext) && eng.libre)) {
+      const dst = freeName(path.dirname(src), stem(src), outExt);
+      const r = await runConvPs(['-Mode', 'office', '-Src', src, '-Dst', dst, '-Kind', kind], null, 300000);
+      if (!r.ok || !fs.existsSync(dst)) throw new Error('O Office não conseguiu converter este arquivo');
+      return [dst];
+    }
+    if (op === 'office2pdf' && eng.libre) {
+      // LibreOffice sem janela, com um perfil só da Ilha (não briga com o LibreOffice aberto)
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ilha-lo-'));
+      const profile = 'file:///' + path.join(os.tmpdir(), 'ilha-lo-perfil').replace(/\\/g, '/');
+      await new Promise(res => require('child_process').execFile(findSoffice(), ['--headless', '--norestore', '--nologo', `-env:UserInstallation=${profile}`, '--convert-to', 'pdf', '--outdir', tmpDir, src], { windowsHide: true, timeout: 300000 }, () => res()));
+      const made = path.join(tmpDir, stem(src) + '.pdf');
+      if (!fs.existsSync(made)) { fs.rmSync(tmpDir, { recursive: true, force: true }); throw new Error('O LibreOffice não conseguiu converter este arquivo'); }
+      const dst = await saveNear(src, stem(src), '.pdf', await fs.promises.readFile(made));
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      return [dst];
+    }
+    const e = new Error(op === 'pdf2docx' ? 'Para PDF → Word é preciso ter o Microsoft Word' : 'Para converter Office em PDF, instale o LibreOffice (grátis) ou o Microsoft Office');
+    e.needs = op === 'pdf2docx' ? 'word' : 'office'; throw e;
+  }
+  throw new Error('Conversão desconhecida');
+}
+// várias fotos → um PDF (uma por página A4, deitada ou em pé conforme a foto)
+async function imagesToPdf(paths, progress) {
+  const { PDFDocument } = require('pdf-lib');
+  const doc = await PDFDocument.create();
+  for (let i = 0; i < paths.length; i++) {
+    progress?.(`foto ${i + 1} de ${paths.length}`);
+    const { bytes, mime } = await readImage(paths[i]);
+    const isJpg = mime === 'image/jpeg';
+    const r = await imageJob(bytes, mime, isJpg ? 'jpg' : 'png', { quality: 0.92, maxSide: 3500 });
+    const img = isJpg ? await doc.embedJpg(r.data) : await doc.embedPng(r.data);
+    const land = img.width > img.height, [pw, ph] = land ? [841.89, 595.28] : [595.28, 841.89], m = 20;
+    const k = Math.min((pw - 2 * m) / img.width, (ph - 2 * m) / img.height);
+    const page = doc.addPage([pw, ph]);
+    page.drawImage(img, { x: (pw - img.width * k) / 2, y: (ph - img.height * k) / 2, width: img.width * k, height: img.height * k });
+  }
+  const name = paths.length > 1 ? `${stem(paths[0])} e mais ${paths.length - 1}` : stem(paths[0]);
+  return [await saveNear(paths[0], name, '.pdf', Buffer.from(await doc.save()))];
+}
+async function mergePdfs(paths, progress) {
+  const { PDFDocument } = require('pdf-lib');
+  const out = await PDFDocument.create();
+  for (let i = 0; i < paths.length; i++) {
+    progress?.(`PDF ${i + 1} de ${paths.length}`);
+    let src; try { src = await PDFDocument.load(await fs.promises.readFile(paths[i]), { ignoreEncryption: true }); } catch (_) { throw new Error(`Não consegui abrir ${path.basename(paths[i])}`); }
+    for (const p of await out.copyPages(src, src.getPageIndices())) out.addPage(p);
+  }
+  return [await saveNear(paths[0], `${stem(paths[0])} (juntado)`, '.pdf', Buffer.from(await out.save()))];
+}
+// fila: uma conversão por vez; a ilha mostra o progresso
+async function convRun({ paths, op }) {
+  paths = (paths || []).map(String).filter(p => fs.existsSync(p) && fs.statSync(p).isFile()).slice(0, 200);
+  if (!paths.length) return send('conv', { state: 'done', outputs: [], errors: [{ name: '', error: 'Nenhum arquivo para converter' }] });
+  conv.queue.push({ paths, op });
+  if (conv.busy) return send('conv', { state: 'queued', waiting: conv.queue.length });
+  conv.busy = true;
+  while (conv.queue.length) {
+    const job = conv.queue.shift(), outputs = [], errors = [];
+    const total = job.op === 'img2pdf' || job.op === 'pdfmerge' ? 1 : job.paths.length;
+    const tick = (done, detail) => send('conv', { state: 'progress', op: job.op, done, total, name: path.basename(job.paths[Math.min(done, job.paths.length - 1)]), detail });
+    tick(0);
+    const srcSize = p => { try { return fs.statSync(p).size; } catch (_) { return 0; } };
+    const add = (src, list) => list.forEach(o => outputs.push({ path: o, name: path.basename(o), size: srcSize(o), srcSize: srcSize(src), dir: fs.statSync(o).isDirectory() }));
+    try {
+      if (job.op === 'img2pdf') add(job.paths[0], await imagesToPdf(job.paths, d => tick(0, d)));
+      else if (job.op === 'pdfmerge') add(job.paths[0], await mergePdfs(job.paths, d => tick(0, d)));
+      else for (let i = 0; i < job.paths.length; i++) {
+        tick(i);
+        try { add(job.paths[i], await convertOne(job.paths[i], job.op, d => tick(i, d))); }
+        catch (e) { errors.push({ name: path.basename(job.paths[i]), error: e.message, needs: e.needs, info: e.info }); }
+      }
+    } catch (e) { errors.push({ name: path.basename(job.paths[0]), error: e.message, needs: e.needs }); }
+    send('conv', { state: 'done', op: job.op, outputs, errors });
+  }
+  conv.busy = false;
+}
+
 // ---------- agenda (link iCal do Google Agenda ou do Outlook) ----------
 const agenda = { events: [], alerted: new Set(), error: '' };
 function icsParse(text, from, to) {
@@ -1191,6 +1376,16 @@ function setupIpc() {
   ipcMain.handle('fx', (_, { from, to }) => fxRate(from, to));
   ipcMain.handle('files:search', (_, q) => searchFiles(String(q || '').slice(0, 120)));
   ipcMain.handle('files:recent', () => recentFiles(8));
+  // conversor
+  ipcMain.handle('conv:engines', () => officeEngines());
+  ipcMain.on('conv:run', (_, req) => { const ops = ['png', 'jpg', 'webp', 'ico', 'bmp', 'compress', 'img2pdf', 'pdfmerge', 'pdf2png', 'office2pdf', 'pdf2docx']; if (req && ops.includes(req.op)) convRun(req); });
+  ipcMain.handle('conv:pick', async () => {
+    const { dialog } = require('electron');
+    win.setAlwaysOnTop(false); // a janela de escolher arquivos aparece por cima
+    const r = await dialog.showOpenDialog({ title: 'Escolha os arquivos para converter', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Fotos, PDFs e documentos', extensions: [...IMG_EXT, '.pdf', ...Object.keys(OFFICE_KIND)].map(e => e.slice(1)) }, { name: 'Todos os arquivos', extensions: ['*'] }] });
+    win.setAlwaysOnTop(true, 'screen-saver');
+    return r.canceled ? [] : r.filePaths;
+  });
   ipcMain.on('ocr:capture', () => ocrCapture());
   ipcMain.on('ocr:file', (_, p) => { p = String(p || ''); if (/\.(png|jpe?g|bmp|gif|tiff?)$/i.test(p) && fs.existsSync(p)) ocrFile(p, 'file'); });
   ipcMain.on('websearch', (_, q) => { q = String(q || '').slice(0, 500); if (q.trim()) shell.openExternal('https://www.google.com/search?q=' + encodeURIComponent(q)); });

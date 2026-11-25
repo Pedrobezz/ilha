@@ -43,6 +43,20 @@ Para os avisos do Claude Code nesse outro PC: abra a Ilha e clique em **Conectar
   - **Emojis:** `emoji fogo` ou `:fogo` (nomes em português). Enter copia.
   - **Copiar texto de um print:** `texto do print` (ou **Ctrl + Alt + T** de qualquer lugar): recorte a área e o texto vai direto para a área de transferência, lido pelo OCR do próprio Windows, sem internet. `texto da imagem` lê a última imagem da prateleira.
 
+## Conversor de arquivos
+
+**Arraste um arquivo (ou vários) até a ilha e segure:** depois de meio segundo as opções aparecem em círculo em volta dele. Solte em cima da que quiser. O arquivo novo fica ao lado do original (nunca sobrescreve: vira `foto (1).png`), e no fim a ilha mostra **Abrir** e **Mostrar**. Soltar antes das opções aparecerem guarda na prateleira, como antes.
+
+Também dá para abrir pela barra de comandos (`converter`) ou com o botão direito num arquivo da prateleira.
+
+| Arquivo | Vira |
+|---|---|
+| Fotos (JPG, PNG, WEBP, GIF, BMP, ICO, AVIF, SVG, **HEIC do iPhone**, TIFF) | PNG, JPG, WEBP, ICO (com 6 tamanhos), PDF (várias fotos viram um PDF só) ou **mais leve** (JPG menor, até 2560 px) |
+| PDF | Imagens PNG (uma por página, numa pasta) · **juntar** vários PDFs num só · Word (precisa do Microsoft Word) |
+| Word, Excel, PowerPoint (e ODT, ODS, ODP, RTF, CSV) | PDF, usando o **Microsoft Office** em segundo plano ou o **LibreOffice** (grátis) |
+
+Tudo funciona sem internet. As fotos são convertidas pelo próprio Chromium numa janela escondida (a ilha não trava); HEIC e TIFF passam antes pelo leitor de imagens do Windows (HEIC precisa da Extensão de Imagem HEIF, que vem na maioria dos PCs); PDF → imagens usa o leitor de PDF do Windows; juntar PDFs e fotos → PDF usam a biblioteca `pdf-lib`. Para o Office, a Ilha procura o programa na hora de converter: sem nenhum instalado, a opção aparece apagada e explica o que instalar (com o link do LibreOffice); instalou, já funciona.
+
 ## Avisos do Claude Code
 
 A Ilha mostra quando o Claude Code **termina** uma resposta (aviso compacto) e quando ele **pede permissão** ou espera você (alerta com som).
@@ -81,5 +95,6 @@ O receptor só aceita conexões do próprio PC e exige a chave, que a Ilha grava
 - `main.js`: janela, hover, bandeja, teste de internet, ponte com o SmartHouse.
 - `helper.ps1`: ajudante nativo (detecta janela maximizada, lê a mídia do Windows e as notificações, mede rede e disco, teclas de mídia).
 - `build/release.js`: publica a versão no GitHub Releases (`npm run release`).
+- `convert.ps1`: conversões pelo Windows (HEIC/TIFF → PNG, PDF → imagens) e pelo Microsoft Office; `renderer/convert.html` + `convert-preload.js`: janela escondida que converte as fotos.
 - `renderer/`: interface (HTML, CSS e JS).
 - Ajustes ficam em `%APPDATA%\ilha\ilha.json`.

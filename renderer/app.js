@@ -24,6 +24,7 @@ function activity() {
   if (S.notice && S.notice.until > Date.now()) return 'notice';
   if (S.volFlash && S.volFlash.until > Date.now()) return 'vol';
   if (S.call) return 'call';
+  if (S.conv) return 'convert';
   if (t.running || (t.left < t.total && t.left > 0)) return 'timer';
   if (S.claude?.working) return 'claude';
   if (S.dl?.length) return 'download';
@@ -34,10 +35,11 @@ function activity() {
 
 function render() {
   let mode, size;
-  if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
+  if (S.ring) { mode = 'convring'; size = S.ring.stage === 'hold' ? [340, 66] : S.ring.box || [620, 360]; }
+  else if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
   else if (S.cmd) { mode = 'command'; const n = S.cmd.items.length; size = [600, 56 + (n ? n * 46 + 10 : 0)]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'media' ? 380 : a === 'download' ? 340 : a === 'call' ? 320 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'media' ? 380 : a === 'download' ? 340 : a === 'convert' ? 340 : a === 'call' ? 320 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
   const walk = mode === 'compact' && activity() === 'claude' && S.cfg.mascot !== false; // mascote passeando embaixo do texto
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
@@ -80,15 +82,15 @@ window.ilha.onHover(h => {
   // escondida, precisa "encostar" um instante na borda: uma passada rápida para clicar numa aba não abre
   // com a música na ilha compacta, o mouse em cima da barra não abre o painel (dá para arrastar)
   const mediaBar = !S.open && S.mode === 'compact' && activity() === 'media';
-  if (h) { if (S.alert || S.cmd || S.gesture) return; openT = setTimeout(() => { if (!S.onBar && !S.gesture) open(); }, S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : mediaBar ? 380 : 70); }
+  if (h) { if (S.alert || S.cmd || S.gesture || S.ring) return; openT = setTimeout(() => { if (!S.onBar && !S.gesture) open(); }, S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : mediaBar ? 380 : 70); }
   else { S.gesture = false; if (S.open && !S.focused) closeT = setTimeout(close, 380); }
 });
-window.ilha.onBlur(() => { if (S.cmd) closeCmd(); if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });
-window.ilha.onToggle(() => (S.cmd ? closeCmd() : S.open ? close() : open(true)));
+window.ilha.onBlur(() => { if (S.cmd) closeCmd(); if (S.ring?.mode === 'click') closeRing(); if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });
+window.ilha.onToggle(() => (S.ring ? closeRing() : S.cmd ? closeCmd() : S.open ? close() : open(true)));
 window.ilha.onCovered(c => { S.covered = c; render(); });
 window.ilha.onCfg(c => { S.cfg = { ...S.cfg, ...c }; fillSettings(); });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (S.cmd) closeCmd(); else close(); return; }
+  if (e.key === 'Escape') { if (S.ring) closeRing(); else if (S.cmd) closeCmd(); else close(); return; }
   // com a ilha aberta pelo atalho, começar a digitar abre a barra de comandos
   if (S.open && S.focused && !S.cmd && e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); openCmd(e.key); }
 });
@@ -440,6 +442,7 @@ function renderCompact() {
   }
   if (a === 'download') return renderDownload(L, R);
   if (a === 'call') return renderCall(L, R);
+  if (a === 'convert') return renderConvert(L, R);
   if (a === 'timer') {
     if (L.dataset.k !== 'timer') { L.innerHTML = `<span class="c-ico" style="background:rgba(255,159,10,.22);color:#ff9f0a">${IC.timer}</span><span style="color:#ff9f0a">${S.timer.running ? 'Foco' : 'Pausado'}</span>`; L.dataset.k = 'timer'; }
     L.lastChild.textContent = S.timer.running ? 'Foco' : 'Pausado';
@@ -1110,21 +1113,36 @@ $('#fav-add').addEventListener('click', async () => {
 });
 $('#fav-url').addEventListener('keydown', e => { if (e.key === 'Enter') $('#fav-add').click(); });
 
-// soltar arquivos: arrastar até o topo abre a ilha na aba Atalhos
-let dragDepth = 0;
+// soltar arquivos: arrastar até a ilha e segurar abre o conversor em círculo (com a Prateleira como opção).
+// Se você já estava com a aba Atalhos aberta, solta nos cartões da prateleira e dos favoritos, como antes.
+let dragDepth = 0, dragCards = false, ringT = 0, ringLeaveT = 0;
 const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
 document.addEventListener('dragenter', e => {
   if (!hasFiles(e)) return;
   e.preventDefault();
-  if (dragDepth++ === 0) { document.body.classList.add('dragging'); open(); if (S.tab !== 'files') setTab('files'); }
+  clearTimeout(ringLeaveT);
+  if (dragDepth++ === 0) {
+    dragCards = S.open && S.tab === 'files' && Date.now() - (S.openedAt || 0) > 1500;
+    if (dragCards) document.body.classList.add('dragging');
+    else if (!S.ring) openRingDrag(e);
+  }
 });
 document.addEventListener('dragleave', e => {
   if (!hasFiles(e)) return;
-  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); $$('.drop-over').forEach(x => x.classList.remove('drop-over')); }
+  if (--dragDepth <= 0) {
+    dragDepth = 0; document.body.classList.remove('dragging'); $$('.drop-over').forEach(x => x.classList.remove('drop-over'));
+    if (S.ring?.mode === 'drag') ringLeaveT = setTimeout(closeRing, 160); // saiu da ilha: fecha (com folga para não piscar)
+  }
 });
 document.addEventListener('dragover', e => {
   if (!hasFiles(e)) return;
   e.preventDefault();
+  if (S.ring?.mode === 'drag') {
+    const o = S.ring.stage === 'open' ? e.target.closest('.ring-opt') : null, op = o?.dataset.op || null;
+    if (op !== S.ring.hover) { S.ring.hover = op; $$('.ring-opt').forEach(x => x.classList.toggle('on', x === o)); ringText(); }
+    e.dataTransfer.dropEffect = S.ring.stage === 'hold' || o ? 'copy' : 'none';
+    return;
+  }
   const card = e.target.closest('#shelf-card, #fav-card');
   $$('#shelf-card, #fav-card').forEach(c => c.classList.toggle('drop-over', c === card));
   e.dataTransfer.dropEffect = card ? 'copy' : 'none';
@@ -1133,10 +1151,18 @@ document.addEventListener('drop', e => {
   if (!hasFiles(e)) return;
   e.preventDefault();
   dragDepth = 0; document.body.classList.remove('dragging');
+  const paths = [...e.dataTransfer.files].map(f => window.ilha.pathOf(f)).filter(Boolean);
+  if (S.ring?.mode === 'drag') {
+    // soltou antes das opções aparecerem: vai para a prateleira (o jeito rápido de antes)
+    const op = S.ring.stage === 'hold' ? 'shelf' : e.target.closest('.ring-opt')?.dataset.op;
+    const opts = S.ring.opts || [];
+    closeRing();
+    if (op) ringRun(op, paths, opts);
+    return;
+  }
   const card = e.target.closest('#shelf-card, #fav-card');
   $$('.drop-over').forEach(x => x.classList.remove('drop-over'));
   if (!card) return;
-  const paths = [...e.dataTransfer.files].map(f => window.ilha.pathOf(f));
   addFiles(card.id === 'shelf-card' ? 'shelf' : 'favs', paths);
 });
 
@@ -1822,6 +1848,7 @@ function ilhaActions(q, raw) {
   }, 'nota');
   const acts = [
     [['print', 'captura', 'recortar tela', 'screenshot'], 'Print de uma área da tela', 'Vai direto para a prateleira', IC2.shot, () => { closeCmd(); window.ilha.print(); }, 'print'],
+    [['converter', 'converter arquivo', 'jpg para png', 'png para jpg', 'para pdf', 'word para pdf', 'juntar pdf', 'heic', 'diminuir foto', 'comprimir'], 'Converter arquivos…', 'Fotos, PDFs e documentos do Office · ou arraste o arquivo até a ilha', IC3.swap, async () => { closeCmd(); const p = await window.ilha.convPick(); if (p.length) openRingClick(p); }, 'convert'],
     [['texto do print', 'copiar texto', 'ocr', 'ler texto', 'texto da tela', 'extrair texto'], 'Copiar texto de um print', 'Recorte a área e o texto vai para a área de transferência · Ctrl+Alt+T', '<svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M9 9h6M12 9v7"/></svg>', () => { closeCmd(); window.ilha.ocrCapture(); }, 'ocr'],
     ...((() => { const img = [...(S.cfg.shelf || [])].reverse().find(p => /\.(png|jpe?g|bmp|gif)$/i.test(p)); return img ? [[['texto da imagem', 'texto da prateleira', 'ocr ultima', 'copiar texto imagem'], 'Copiar texto da última imagem da prateleira', img.split(/[\\/]/).pop(), IC2.shot, () => { closeCmd(); window.ilha.ocrFile(img); }, 'ocrshelf']] : []; })()),
     [['teste de internet', 'velocidade', 'speedtest'], 'Testar a velocidade da internet', 'Aba Internet', IC.gauge, () => { goTab('net'); if (!S.speed.running) window.ilha.speedStart(); }, 'speed'],
@@ -2043,6 +2070,177 @@ cmdIn.addEventListener('keydown', e => {
 cmdList.addEventListener('mousemove', e => { const r = e.target.closest('.cmd-row'); if (r && +r.dataset.i !== S.cmd?.sel) cmdSel(+r.dataset.i); });
 cmdList.addEventListener('click', e => { const r = e.target.closest('.cmd-row'); if (r) S.cmd?.items[+r.dataset.i]?.run(); });
 $('#cmd-open').addEventListener('click', () => openCmd(''));
+
+/* ---- conversor de arquivos: opções em círculo em volta do arquivo ---- */
+const RING_IC = {
+  image: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M8.5 13h7M8.5 16.5h5"/></svg>',
+  word: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="m8.5 11 1.5 6 2-4.5 2 4.5 1.5-6"/></svg>',
+  excel: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="m9 11 6 6M15 11l-6 6"/></svg>',
+  ppt: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M9.5 17v-6h2.5a2 2 0 0 1 0 4H9.5"/></svg>',
+  file: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>',
+  shelf: '<svg viewBox="0 0 24 24"><path d="M3 7h18M5 7v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M9 11h6"/><path d="M4 4h16v3H4z"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
+  shrink: '<svg viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>',
+};
+const EXT_KIND = { jpg: 'image', jpeg: 'image', jfif: 'image', png: 'image', webp: 'image', gif: 'image', bmp: 'image', ico: 'image', avif: 'image', svg: 'image', heic: 'image', heif: 'image', tif: 'image', tiff: 'image', pdf: 'pdf', doc: 'word', docx: 'word', odt: 'word', rtf: 'word', xls: 'excel', xlsx: 'excel', ods: 'excel', csv: 'excel', ppt: 'ppt', pptx: 'ppt', odp: 'ppt' };
+const EXT_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const kindOfMime = t => /^image\//.test(t) ? 'image' : t === 'application/pdf' ? 'pdf' : /msword|wordprocessing|opendocument\.text|rtf/.test(t) ? 'word' : /ms-excel|spreadsheet|csv/.test(t) ? 'excel' : /powerpoint|presentation/.test(t) ? 'ppt' : '';
+const extOf = p => (String(p).match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+const KIND_NAME = { image: ['foto', 'fotos'], pdf: ['PDF', 'PDFs'], word: ['documento do Word', 'documentos do Word'], excel: ['planilha', 'planilhas'], ppt: ['apresentação', 'apresentações'], '': ['arquivo', 'arquivos'] };
+let convEngines = null;
+const loadEngines = () => window.ilha.convEngines().then(e => { convEngines = e; if (S.ring?.stage === 'open') renderRing(true); }).catch(() => {});
+setTimeout(loadEngines, 30000);
+function ringOptions(kind, count, mimes) {
+  const o = [], add = (op, b, s, c, extra = {}) => o.push({ op, b, s, c, ...extra });
+  const allAre = m => mimes.length > 0 && mimes.every(x => x === m);
+  if (kind === 'image') {
+    if (!allAre('image/png')) add('png', 'PNG', 'imagem', '#0a84ff');
+    if (!allAre('image/jpeg')) add('jpg', 'JPG', 'foto', '#ff9f0a');
+    if (!allAre('image/webp')) add('webp', 'WEBP', 'para web', '#30d158');
+    add('ico', 'ICO', 'ícone', '#bf5af2');
+    add('img2pdf', 'PDF', count > 1 ? 'juntar' : 'documento', '#ff453a', { say: count > 1 ? `Juntar ${count} fotos num PDF` : 'Transformar em PDF' });
+    add('compress', RING_IC.shrink, 'diminuir', '#64d2ff', { icon: true, say: 'Deixar a foto mais leve (JPG)' });
+  } else if (kind === 'pdf') {
+    add('pdf2png', 'PNG', 'páginas', '#0a84ff', { say: 'Uma imagem por página' });
+    if (count > 1) add('pdfmerge', 'Juntar', `${count} PDFs`, '#ff453a', { say: `Juntar ${count} PDFs num só` });
+    add('pdf2docx', 'Word', 'editar', '#2b7cd3', { off: convEngines ? !convEngines.word : false, why: 'Precisa do Microsoft Word instalado', say: 'Transformar em Word' });
+  } else if (kind === 'word' || kind === 'excel' || kind === 'ppt') {
+    const ok = !convEngines || convEngines.libre || convEngines[kind];
+    add('office2pdf', 'PDF', 'documento', '#ff453a', { off: !ok, why: 'Instale o LibreOffice (grátis) ou o Microsoft Office', say: 'Transformar em PDF' });
+  }
+  add('shelf', RING_IC.shelf, 'prateleira', '#8e8e93', { icon: true, say: 'Guardar na prateleira' });
+  if (!kind) {
+    add('favs', RING_IC.star, 'favoritos', '#ffd60a', { icon: true, say: 'Adicionar aos favoritos' });
+    if (S.ring?.mode === 'drag') add('more', RING_IC.more, 'converter', '#5e5ce6', { icon: true, say: 'Ver como converter' });
+  }
+  return o;
+}
+function ringText() {
+  const R = S.ring; if (!R) return;
+  const opt = (R.opts || []).find(o => o.op === R.hover);
+  const name = KIND_NAME[R.kind] || KIND_NAME[''];
+  $('#ring .rc-t').textContent = opt ? (opt.off ? opt.why : opt.say || `Converter para ${opt.b}`) : R.count > 1 ? `${R.count} ${name[1]}` : R.name || name[0];
+  $('#ring .rc-s').textContent = R.stage === 'hold' ? 'Segure para ver as opções' : opt ? (opt.off ? 'Solte para saber como' : 'Solte para fazer') : R.mode === 'drag' ? 'Solte numa opção' : 'Escolha uma opção · Esc fecha';
+}
+// o círculo cresce com o número de opções (2 opções ficam lado a lado, numa ilha menor): [largura, altura, raio x, raio y]
+const ringBox = n => (n <= 2 ? [500, 200, 175, 0] : n === 3 ? [540, 300, 195, 92] : [620, 360, 232, 126]);
+const ringPrepare = R => { R.box = ringBox(ringOptions(R.kind, R.count, R.mimes).length).slice(0, 2); };
+function renderRing(rebuild) {
+  const R = S.ring, el = $('#ring'); if (!R) return;
+  el.className = R.stage;
+  $('#ring .rc-ic').innerHTML = R.thumb ? `<img src="${R.thumb}" alt="">` : RING_IC[R.kind] || RING_IC.file;
+  if (R.stage === 'open' && (rebuild || !R.opts)) {
+    R.opts = ringOptions(R.kind, R.count, R.mimes);
+    const n = R.opts.length, [W, H, rx, ry] = ringBox(n);
+    const cx = W / 2, cy = H / 2 + 2, start = n <= 2 ? 180 : -90;
+    const grow = !R.box || R.box[0] !== W; R.box = [W, H]; if (grow) render();
+    $('#ring .ring-opts').innerHTML = R.opts.map((o, i) => {
+      const a = (start + i * 360 / n) * Math.PI / 180;
+      return `<button class="ring-opt${o.off ? ' off' : ''}" data-op="${o.op}" style="left:${(cx + rx * Math.cos(a)).toFixed(1)}px;top:${(cy + ry * Math.sin(a)).toFixed(1)}px;--oc:${o.c};transition-delay:${(i * 0.035).toFixed(3)}s,${(i * 0.035).toFixed(3)}s,0s,0s">${o.icon ? o.b : `<b>${o.b}</b>`}<small>${esc(o.s)}</small></button>`;
+    }).join('');
+  }
+  if (R.stage !== 'open') $('#ring .ring-opts').innerHTML = '';
+  ringText();
+}
+function openRingDrag(e) {
+  const items = [...(e.dataTransfer?.items || [])].filter(i => i.kind === 'file');
+  const mimes = items.map(i => i.type || ''), kinds = [...new Set(mimes.map(kindOfMime))];
+  clearTimeout(openT); clearTimeout(closeT);
+  if (S.open) { S.open = false; $$('.forecast.show').forEach(f => f.classList.remove('show')); }
+  S.ring = { mode: 'drag', stage: 'hold', kind: kinds.length === 1 ? kinds[0] : '', count: Math.max(1, items.length), mimes, hover: null };
+  render(); renderRing();
+  clearTimeout(ringT);
+  ringT = setTimeout(() => { if (S.ring?.mode === 'drag') { S.ring.stage = 'open'; ringPrepare(S.ring); render(); renderRing(true); uiSound('open'); loadEngines(); } }, 650);
+}
+async function openRingClick(paths) {
+  paths = (paths || []).filter(Boolean); if (!paths.length) return;
+  const kinds = [...new Set(paths.map(p => EXT_KIND[extOf(p)] || ''))];
+  clearTimeout(openT); if (S.open) S.open = false;
+  if (S.cmd) closeCmd();
+  S.ring = { mode: 'click', stage: 'open', paths, kind: kinds.length === 1 ? kinds[0] : '', count: paths.length, mimes: paths.map(p => EXT_MIME[extOf(p)] || extOf(p)), name: paths.length === 1 ? paths[0].split(/[\\/]/).pop() : '', hover: null };
+  ringPrepare(S.ring); render(); renderRing(true); uiSound('open');
+  if (!S.focused) { S.focused = true; window.ilha.focus(true); }
+  loadEngines();
+  try { const [inf] = await window.ilha.fileInfo([paths[0]]); if (inf?.icon && S.ring?.paths === paths) { S.ring.thumb = inf.icon; renderRing(); } } catch (_) {}
+}
+function closeRing() {
+  clearTimeout(ringT); clearTimeout(ringLeaveT);
+  if (!S.ring) return;
+  const wasClick = S.ring.mode === 'click';
+  S.ring = null; $('#ring .ring-opts').innerHTML = '';
+  if (wasClick && S.focused) { S.focused = false; window.ilha.focus(false); }
+  render();
+}
+const LIBRE_URL = 'https://pt-br.libreoffice.org/baixe-ja/libreoffice-novo/';
+const needsAlert = (needs, msg) => showAlert(needs === 'word' ? 'Precisa do Word' : 'Falta um programa', msg, `<span class="a-ico-blue">${RING_IC.word}</span>`, {
+  size: [600, 84], ms: 20000,
+  buttons: needs === 'word' ? [{ label: 'OK' }] : [{ label: 'Agora não' }, { label: 'Baixar LibreOffice', cls: 'blue', fn: () => window.ilha.open(LIBRE_URL) }],
+});
+function ringRun(op, paths, opts = []) {
+  if (!paths.length) return toast('Não consegui pegar esse arquivo');
+  if (op === 'shelf') return addFiles('shelf', paths);
+  if (op === 'favs') return addFiles('favs', paths);
+  if (op === 'more') return openRingClick(paths);
+  const o = opts.find(x => x.op === op);
+  if (o?.off) return needsAlert(op === 'pdf2docx' ? 'word' : 'office', o.why);
+  // só os arquivos do tipo certo (ex.: soltou fotos e um PDF juntos)
+  const want = { png: 'image', jpg: 'image', webp: 'image', ico: 'image', compress: 'image', img2pdf: 'image', pdf2png: 'pdf', pdfmerge: 'pdf', pdf2docx: 'pdf' }[op];
+  const list = want ? paths.filter(p => EXT_KIND[extOf(p)] === want) : paths.filter(p => ['word', 'excel', 'ppt'].includes(EXT_KIND[extOf(p)]));
+  if (!list.length) return toast('Esse arquivo não serve para essa conversão');
+  S.conv = { done: 0, total: op === 'img2pdf' || op === 'pdfmerge' ? 1 : list.length, op, detail: '' };
+  render();
+  window.ilha.convRun(list, op);
+}
+$('#ring').addEventListener('click', e => {
+  const b = e.target.closest('.ring-opt'); if (!b || S.ring?.mode !== 'click') return;
+  const { paths, opts } = S.ring; closeRing(); ringRun(b.dataset.op, paths, opts);
+});
+$('#ring').addEventListener('mouseover', e => {
+  if (S.ring?.mode !== 'click') return;
+  const op = e.target.closest('.ring-opt')?.dataset.op || null;
+  if (op !== S.ring.hover) { S.ring.hover = op; ringText(); }
+});
+// progresso na ilha fechada e o resultado
+const CONV_VERB = { png: 'Convertendo para PNG', jpg: 'Convertendo para JPG', webp: 'Convertendo para WEBP', ico: 'Criando o ícone', bmp: 'Convertendo para BMP', compress: 'Diminuindo', img2pdf: 'Criando o PDF', pdfmerge: 'Juntando os PDFs', pdf2png: 'Separando as páginas', office2pdf: 'Convertendo para PDF', pdf2docx: 'Convertendo para Word' };
+function renderConvert(L, R) {
+  const c = S.conv;
+  if (L.dataset.k !== 'conv') { L.innerHTML = `<span class="c-ico" style="background:rgba(10,132,255,.22);color:#64d2ff">${IC3.swap}</span><span class="c-note" style="color:var(--t1);max-width:190px"></span>`; L.dataset.k = 'conv'; }
+  L.lastChild.textContent = CONV_VERB[c.op] || 'Convertendo';
+  R.innerHTML = `<span class="c-note" style="max-width:120px">${esc(c.detail || (c.total > 1 ? `${Math.min(c.done + 1, c.total)} de ${c.total}` : '…'))}</span>`; R.dataset.k = '';
+}
+window.ilha.onConv(async m => {
+  if (m.state === 'progress') { S.conv = { ...S.conv, ...m }; if (!S.open && activity() === 'convert') renderCompact(); else render(); return; }
+  if (m.state === 'queued') return toast('Na fila: começa quando a conversão atual terminar');
+  if (m.state !== 'done') return;
+  S.conv = null; render();
+  const out = m.outputs || [], errs = m.errors || [];
+  if (!out.length) {
+    const e = errs[0] || { error: 'Não deu certo' };
+    if (e.needs) return needsAlert(e.needs, e.error);
+    if (e.info) return showAlert('Nada para mudar', e.error, `<span class="a-ico-blue" style="background:rgba(48,209,88,.2);color:#30d158">${RING_IC.shrink}</span>`, { size: [520, 84] });
+    return showAlert('Não deu para converter', `${e.name ? e.name + ': ' : ''}${e.error}`, `<span class="a-ico-blue" style="background:rgba(255,69,58,.2);color:#ff6961">${IC3.swap}</span>`, { size: [560, 84] });
+  }
+  const f = out[0];
+  let body = out.length > 1 ? `${out.length} arquivos ao lado dos originais` : f.dir ? `Pasta “${f.name}”` : `${f.name} · ${fmtBytes(f.size)}`;
+  if (m.op === 'compress' && out.length === 1 && f.srcSize) body += f.size < f.srcSize ? ` (era ${fmtBytes(f.srcSize)}, ${Math.round(100 - 100 * f.size / f.srcSize)}% menor)` : ' (já estava leve)';
+  if (errs.length) body += ` · ${errs.length} não deu`;
+  let icon = `<span class="a-ico-blue" style="background:rgba(48,209,88,.2);color:#30d158">${IC3.swap}</span>`;
+  try { const [inf] = await window.ilha.fileInfo([f.path]); if (inf?.icon) icon = `<img class="a-appicon" src="${inf.icon}" alt="">`; } catch (_) {}
+  uiSound('notice');
+  whenIdle(() => showAlert(out.length > 1 ? 'Prontos!' : 'Pronto!', body, icon, {
+    size: [560, 84], ms: 15000,
+    buttons: [{ label: 'Mostrar', fn: () => window.ilha.reveal(f.path) }, { label: 'Abrir', cls: 'blue', fn: () => window.ilha.openPath(f.path) }],
+  }));
+});
+// botão direito num arquivo da prateleira ou dos favoritos: converter
+for (const id of ['#shelf', '#favs']) $(id).addEventListener('contextmenu', e => {
+  const it = e.target.closest('.fitem'); if (!it) return;
+  const p = S.cfg[it.dataset.kind]?.[Number(it.dataset.i)];
+  if (!p || /^https?:/.test(p)) return;
+  e.preventDefault(); close(); openRingClick([p]);
+});
 
 /* ---- conectar ao Claude Code com um clique ---- */
 async function loadHooks() { S.hooks = await window.ilha.claudeHooks('status'); renderHooks(); }
