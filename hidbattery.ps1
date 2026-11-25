@@ -179,7 +179,10 @@ function Get-HyperX {
     [void][Hid]::Write($h, [byte[]](0x66, 0x89), $ven.OutLen)
     $r = Read-Match $h $ven.InLen 800 { param($b) $b[0] -eq 0x66 -and $b[1] -eq 0x89 }
     if (-not $r -or $r[4] -gt 100) { return $null }
-    return @{ name = 'HyperX Cloud III'; battery = [int]$r[4]; charging = $false; kind = 'headset' }
+    # 66 8A: 1 = no cabo, carregando (conferido tirando e colocando o cabo)
+    [void][Hid]::Write($h, [byte[]](0x66, 0x8A), $ven.OutLen)
+    $c = Read-Match $h $ven.InLen 600 { param($b) $b[0] -eq 0x66 -and $b[1] -eq 0x8A }
+    return @{ name = 'HyperX Cloud III'; battery = [int]$r[4]; charging = [bool]($c -and $c[2] -eq 1); kind = 'headset' }
   } finally { $h.Dispose() }
 }
 

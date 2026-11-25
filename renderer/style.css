@@ -786,3 +786,21 @@ body.dragging .drop-hint { opacity: 1; }
 .cl-now.working .cl-lane { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .mascot, .mascot svg, .mascot .fa, .mascot .fb { animation: none; } }
 .mascot svg, .mascot rect { stroke: none !important; }
+
+/* ================= baterias estilo iPhone ================= */
+.dev-rings { display: flex; justify-content: space-around; gap: 6px; }
+.dring { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 58px; }
+.dring-c { position: relative; width: 56px; height: 56px; border-radius: 50%; background: rgba(255, 255, 255, .06); }
+.dring-svg { position: absolute; inset: 0; width: 56px; height: 56px; transform: rotate(-90deg); }
+.dring-svg circle { fill: none; stroke-width: 3.6; stroke: rgba(255, 255, 255, .1); }
+.dring-svg circle.v { stroke: var(--c); stroke-linecap: round; stroke-dasharray: 119.4; transition: stroke-dashoffset .9s var(--soft), stroke .4s; }
+.dring-ic { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; }
+.dring-ic svg { width: 26px; height: 26px; }
+.dring.off .dring-ic { color: rgba(255, 255, 255, .35); }
+.dring b { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.dring.off b { color: var(--t3); }
+.dring-bolt { position: absolute; top: -2px; right: -2px; width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center; background: #30d158; color: #00230c; box-shadow: 0 0 0 2.5px #1c1c1e; animation: bolt-in .5s var(--spring); }
+.dring-bolt svg { width: 12px; height: 12px; }
+.dring.chg .dring-svg circle.v { animation: chg-glow 2s ease-in-out infinite; }
+@keyframes chg-glow { 50% { filter: drop-shadow(0 0 4px #30d158); } }
+@keyframes bolt-in { from { transform: scale(0); } }

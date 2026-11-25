@@ -375,7 +375,7 @@ async function btBatteryLoop() {
   const list = [...hid, ...bt];
   const sig = JSON.stringify(list);
   if (sig !== btLast) { btLast = sig; send('btbat', list); }
-  setTimeout(btBatteryLoop, 45000);
+  setTimeout(btBatteryLoop, 25000);
 }
 ipcMain.handle('peripherals', () => { try { return JSON.parse(btLast || '[]'); } catch (_) { return []; } });
 

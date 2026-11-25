@@ -412,7 +412,7 @@ function spark(id, data, max) {
   const f = $('#' + id + '-f'); if (f) f.setAttribute('d', `${d} L100 34 L${pts[0][0].toFixed(2)} 34 Z`);
 }
 function setRing(id, pct, label) {
-  const r = $('#' + id);
+  const r = $('#' + id); if (!r) return;
   r.querySelector('.v').style.strokeDashoffset = 113.1 * (1 - clamp(pct, 0, 100) / 100);
   r.querySelector('b').textContent = label ?? Math.round(pct) + '%';
 }
@@ -467,7 +467,7 @@ async function initBattery() {
         $('#s-battxt').textContent = b.charging ? (b.chargingTime && isFinite(b.chargingTime) ? `Carregando · cheia em ${fmtUptime(b.chargingTime)}` : 'Carregando') : (isFinite(b.dischargingTime) ? `Restam ${fmtUptime(b.dischargingTime)}` : 'Na bateria');
         $('#bar-status').innerHTML = `<span class="bat-mini">${b.charging ? '⚡' : ''}${p}%</span>`;
       } else {
-        setRing('ring-bat', 100, '∞'); $('#ring-bat span').textContent = 'Tomada';
+        setRing('ring-bat', 100, '∞');
         $('#s-bat').textContent = 'Tomada'; $('#s-batfill').style.width = '100%'; $('#s-batfill').style.background = 'linear-gradient(90deg, rgba(48,209,88,.55), rgba(48,209,88,.85))';
         $('#s-battxt').textContent = 'Ligado na energia (PC de mesa)';
         $('#bar-status').innerHTML = '<svg viewBox="0 0 24 24"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16.3a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r=".8" fill="currentColor"/></svg>';
@@ -1134,6 +1134,36 @@ $('#bright').addEventListener('input', e => {
 function askBright() { if (Date.now() - brightAsked > 60000) { brightAsked = Date.now(); window.ilha.media('bright'); } }
 
 /* ---- bateria dos aparelhos Bluetooth ---- */
+// anéis de bateria no estilo do widget "Baterias" do iPhone: desenho do aparelho dentro, % embaixo, raio ao carregar
+const DEV_IC = {
+  headset: '<svg viewBox="0 0 24 24"><path d="M4.5 15v-3a7.5 7.5 0 0 1 15 0v3" stroke-width="1.9"/><path d="M4.5 13.5h1.8a1.2 1.2 0 0 1 1.2 1.2v4.1a1.2 1.2 0 0 1-1.2 1.2H5.7a1.2 1.2 0 0 1-1.2-1.2z M19.5 13.5h-1.8a1.2 1.2 0 0 0-1.2 1.2v4.1a1.2 1.2 0 0 0 1.2 1.2h.6a1.2 1.2 0 0 0 1.2-1.2z" fill="currentColor" stroke="none"/></svg>',
+  mouse: '<svg viewBox="0 0 24 24"><path d="M12 3.2c3.2 0 5.6 2.6 5.6 5.9v5.6c0 3.4-2.5 6.1-5.6 6.1s-5.6-2.7-5.6-6.1V9.1c0-3.3 2.4-5.9 5.6-5.9z" fill="currentColor" stroke="none"/><path d="M12 3.6v5.2M6.6 9.6h10.8" stroke="#1c1c1e" stroke-width="1.1"/><rect x="11.2" y="5.4" width="1.6" height="2.6" rx=".8" fill="#1c1c1e" stroke="none"/></svg>',
+  keyboard: '<svg viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="19" height="11" rx="2.2" fill="currentColor" stroke="none"/><path d="M5.5 9.7h1M8.5 9.7h1M11.5 9.7h1M14.5 9.7h1M17.5 9.7h1M5.5 12.2h1M8.5 12.2h1M11.5 12.2h1M14.5 12.2h1M17.5 12.2h1M7.5 14.8h9" stroke="#1c1c1e" stroke-width="1.3"/></svg>',
+  laptop: '<svg viewBox="0 0 24 24"><rect x="4.5" y="5" width="15" height="10" rx="1.5" fill="currentColor" stroke="none"/><path d="M2.5 18h19" stroke-width="2"/></svg>',
+  other: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="3" fill="currentColor" stroke="none"/></svg>',
+};
+const BOLT = '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor" stroke="none"/></svg>';
+function renderDevRings() {
+  const list = S.btBat || [];
+  const headset = list.find(d => d.kind === 'headset'), mouse = list.find(d => d.kind === 'mouse');
+  const slots = [
+    { label: 'Fone', icon: 'headset', d: headset },
+    { label: 'Mouse', icon: 'mouse', d: mouse },
+  ];
+  // 3º anel: a bateria do notebook ou outro aparelho com bateria (ex.: teclado Bluetooth)
+  if (S.battery) slots.push({ label: 'Este PC', icon: 'laptop', d: { name: 'Este PC', battery: Math.round(S.battery.level * 100), charging: S.battery.charging } });
+  else { const o = list.find(d => d !== headset && d !== mouse); if (o) slots.push({ label: o.name.split(' ')[0], icon: /keyboard|teclado|anne|keychron/i.test(o.name) ? 'keyboard' : 'other', d: o }); }
+  $('#dev-rings').innerHTML = slots.map(s => {
+    const d = s.d, p = d ? clamp(d.battery, 0, 100) : 0;
+    const color = !d ? 'rgba(255,255,255,.18)' : d.charging ? '#30d158' : p <= 20 ? '#ff453a' : '#30d158';
+    const title = d ? `${d.name}: ${p}%${d.charging ? ' · carregando' : ''}` : `${s.label} desligado ou fora do alcance`;
+    return `<div class="dring ${d ? '' : 'off'} ${d?.charging ? 'chg' : ''}" style="--c:${color}" title="${esc(title)}">
+      <div class="dring-c"><svg class="dring-svg" viewBox="0 0 44 44"><circle cx="22" cy="22" r="19"/><circle class="v" cx="22" cy="22" r="19" style="stroke-dashoffset:${(119.4 * (1 - p / 100)).toFixed(1)}"/></svg>
+        <span class="dring-ic">${DEV_IC[s.icon]}</span>${d?.charging ? `<span class="dring-bolt">${BOLT}</span>` : ''}</div>
+      <b>${d ? p + '%' : '–'}</b></div>`;
+  }).join('');
+}
+
 // periféricos: Bluetooth + fone/mouse com receptor próprio (HyperX, Logitech)
 const lowWarned = new Set();
 function onPeripherals(list) {
@@ -1143,14 +1173,7 @@ function onPeripherals(list) {
   const bt = list.filter(d => d.kind === 'bt');
   if (bt[0]) { $('#ql-bt').textContent = `${bt[0].name.split(' ')[0]} ${bt[0].battery}% ›`; $('#ql-bt').title = bt.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
   else { $('#ql-bt').textContent = 'Bluetooth ›'; $('#ql-bt').title = 'Ver os dispositivos Bluetooth'; }
-  // no PC de mesa (sem bateria), o 3º anel do Início mostra o periférico com menos bateria
-  if (!S.battery && list.length) {
-    const low = [...list].sort((a, b) => a.battery - b.battery)[0];
-    setRing('ring-bat', low.battery, low.battery + '%');
-    $('#ring-bat span').textContent = low.kind === 'headset' ? 'Fone' : low.kind === 'mouse' ? 'Mouse' : low.name.split(' ')[0];
-    $('#ring-bat').style.setProperty('--c', low.battery <= 15 ? '#ff453a' : low.battery <= 35 ? '#ff9f0a' : '#30d158');
-    $('#ring-bat').title = list.map(d => `${d.name}: ${d.battery}%${d.charging ? ' (carregando)' : ''}`).join('\n');
-  }
+  renderDevRings();
   for (const d of list) {
     if (!first && !prev.has(d.name)) notice('head', '#0a84ff', d.name, `Bateria ${d.battery}%`, 4000);
     if (d.battery <= 15 && !d.charging && !lowWarned.has(d.name)) { lowWarned.add(d.name); notice('head', '#ff453a', 'Bateria fraca', `${d.name}: ${d.battery}%`, 6000); }
@@ -1310,6 +1333,7 @@ $('#set-pulse').addEventListener('change', async e => { S.cfg = await window.ilh
   S.conn = await window.ilha.conn();
   S.claude = await window.ilha.claudeState();
   window.ilha.media('radios');
+  renderDevRings();
   S.agenda = await window.ilha.agenda(); renderAgenda();
   renderHistory(S.cfg.speedHistory);
   renderFiles('shelf'); renderFiles('favs');
