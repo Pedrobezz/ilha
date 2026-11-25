@@ -27,6 +27,15 @@ public interface IMMDevice { int Activate(ref Guid iid, int clsCtx, IntPtr p, [M
 [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint); }
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] public class MMDeviceEnumeratorCom { }
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionManager2 { int f(); int g(); int GetSessionEnumerator(out IAudioSessionEnumerator e); }
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionEnumerator { int GetCount(out int n); int GetSession(int i, [MarshalAs(UnmanagedType.IUnknown)] out object s); }
+[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioSessionControl2 {
+  int GetState(out int state); int a1(); int a2(); int a3(); int a4(); int a5(); int a6(); int a7(); int a8();
+  int b1(); int b2(); int GetProcessId(out uint pid);
+}
 
 public static class IslandNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
@@ -55,6 +64,94 @@ public static class IslandNative {
   public static void Key(int vk) { keybd_event((byte)vk, 0, 0, UIntPtr.Zero); keybd_event((byte)vk, 0, 2, UIntPtr.Zero); }
 
   public static int MonX = 0, MonY = 0;
+
+  // ---- microfone: mudo do dispositivo de gravação padrão ----
+  static IAudioEndpointVolume Capture() {
+    try {
+      var en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorCom());
+      IMMDevice dev; if (en.GetDefaultAudioEndpoint(1, 1, out dev) != 0) return null;
+      Guid iid = typeof(IAudioEndpointVolume).GUID; object o;
+      if (dev.Activate(ref iid, 23, IntPtr.Zero, out o) != 0) return null;
+      return (IAudioEndpointVolume)o;
+    } catch { return null; }
+  }
+  public static int MicMuted() { try { var c = Capture(); if (c == null) return -1; bool m; c.GetMute(out m); return m ? 1 : 0; } catch { return -1; } }
+  public static void ToggleMic() { try { var c = Capture(); if (c == null) return; bool m; c.GetMute(out m); c.SetMute(!m, Guid.Empty); } catch {} }
+
+  // ---- microfone em uso: programas com sessão de áudio ATIVA no microfone padrão ----
+  public static string MicApps(uint selfPid) {
+    var apps = new System.Collections.Generic.List<string>();
+    try {
+      var en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorCom());
+      IMMDevice dev; if (en.GetDefaultAudioEndpoint(1, 1, out dev) != 0) return "";
+      Guid iid = typeof(IAudioSessionManager2).GUID; object o;
+      if (dev.Activate(ref iid, 23, IntPtr.Zero, out o) != 0) return "";
+      IAudioSessionEnumerator se; ((IAudioSessionManager2)o).GetSessionEnumerator(out se);
+      int n; se.GetCount(out n);
+      for (int i = 0; i < n; i++) {
+        object so; se.GetSession(i, out so);
+        var s2 = so as IAudioSessionControl2; if (s2 == null) continue;
+        int st; s2.GetState(out st); if (st != 1) continue; // 1 = ativa (gravando agora)
+        uint pid; s2.GetProcessId(out pid); if (pid == 0 || pid == selfPid) continue;
+        try { var name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName + ".exe"; if (!apps.Contains(name)) apps.Add(name); } catch {}
+      }
+    } catch {}
+    return string.Join(";", apps);
+  }
+
+  // ---- câmera em uso (o mesmo registro que o Windows usa para o ícone da barra) ----
+  // devolve os apps usando agora, ex.: "Discord.exe;chrome.exe"
+  public static string InUse(string cap) {
+    var apps = new System.Collections.Generic.List<string>();
+    try {
+      using (var root = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\" + cap)) {
+        if (root == null) return "";
+        Action<Microsoft.Win32.RegistryKey, string> check = (k, name) => {
+          object s = k.GetValue("LastUsedTimeStart"), e = k.GetValue("LastUsedTimeStop");
+          if (s is long && (long)s > 0 && e is long && (long)e == 0) apps.Add(name);
+        };
+        foreach (var n in root.GetSubKeyNames()) {
+          if (n == "NonPackaged") {
+            using (var np = root.OpenSubKey(n)) foreach (var m in np.GetSubKeyNames()) using (var k = np.OpenSubKey(m)) if (k != null) check(k, m.Substring(m.LastIndexOf('#') + 1));
+          } else using (var k = root.OpenSubKey(n)) if (k != null) check(k, n.Split('_')[0]);
+        }
+      }
+    } catch {}
+    return string.Join(";", apps);
+  }
+
+  // ---- brilho dos monitores externos (DDC/CI) ----
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct PHYSICAL_MONITOR { public IntPtr h; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string desc; }
+  delegate bool MonitorEnumProc(IntPtr hMon, IntPtr hdc, ref RECT r, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc cb, IntPtr data);
+  [DllImport("dxva2.dll")] static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr h, out uint n);
+  [DllImport("dxva2.dll")] static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr h, uint n, [Out] PHYSICAL_MONITOR[] arr);
+  [DllImport("dxva2.dll")] static extern bool GetMonitorBrightness(IntPtr h, out uint min, out uint cur, out uint max);
+  [DllImport("dxva2.dll")] static extern bool SetMonitorBrightness(IntPtr h, uint v);
+  [DllImport("dxva2.dll")] static extern bool DestroyPhysicalMonitors(uint n, PHYSICAL_MONITOR[] arr);
+  static void EachMonitor(Action<IntPtr> fn) {
+    var list = new System.Collections.Generic.List<IntPtr>();
+    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hm, IntPtr hdc, ref RECT r, IntPtr d) => { list.Add(hm); return true; }, IntPtr.Zero);
+    foreach (var hm in list) {
+      uint n; if (!GetNumberOfPhysicalMonitorsFromHMONITOR(hm, out n) || n == 0) continue;
+      var arr = new PHYSICAL_MONITOR[n];
+      if (!GetPhysicalMonitorsFromHMONITOR(hm, n, arr)) continue;
+      foreach (var pm in arr) fn(pm.h);
+      DestroyPhysicalMonitors(n, arr);
+    }
+  }
+  // brilho em % do primeiro monitor que aceita DDC/CI, ou -1
+  public static int GetBright() {
+    int res = -1;
+    EachMonitor(h => { if (res >= 0) return; uint mn, cur, mx; if (GetMonitorBrightness(h, out mn, out cur, out mx) && mx > mn) res = (int)Math.Round(100.0 * (cur - mn) / (mx - mn)); });
+    return res;
+  }
+  public static int SetBright(int pct) {
+    int ok = 0;
+    EachMonitor(h => { uint mn, cur, mx; if (GetMonitorBrightness(h, out mn, out cur, out mx) && mx > mn) { if (SetMonitorBrightness(h, (uint)(mn + (mx - mn) * pct / 100.0))) ok++; } });
+    return ok;
+  }
 
   // ---- volume do Windows (Core Audio) ----
   static IAudioEndpointVolume vol; static DateTime volAt = DateTime.MinValue;
@@ -185,6 +282,33 @@ function Set-Radio([string]$kind, [bool]$on) {
   try { [void](Await ($r.SetStateAsync($st)) ([Windows.Devices.Radios.RadioAccessStatus])) } catch {}
 }
 
+# ---- brilho: monitores externos por DDC/CI, notebook pelo WMI ----
+function Get-Bright {
+  $v = [IslandNative]::GetBright(); $kind = 'ddc'
+  if ($v -lt 0) {
+    $w = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($w) { $v = [int]$w.CurrentBrightness; $kind = 'wmi' } else { $kind = 'none' }
+  }
+  Out-J @{ t = 'bright'; value = $v; kind = $kind }
+}
+function Set-Bright([int]$p) {
+  $p = [math]::Max(0, [math]::Min(100, $p))
+  if ([IslandNative]::SetBright($p) -eq 0) {
+    $m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($m) { [void](Invoke-CimMethod -InputObject $m -MethodName WmiSetBrightness -Arguments @{ Timeout = 1; Brightness = [byte]$p }) }
+  }
+}
+
+# ---- microfone e câmera em uso ----
+$lastAv = ''
+function Get-Av {
+  $mic = [IslandNative]::MicApps([uint32]$SelfPid); $cam = [IslandNative]::InUse('webcam'); $mm = [IslandNative]::MicMuted()
+  $sig = "$mic|$cam|$mm"
+  if ($sig -eq $script:lastAv) { return }
+  $script:lastAv = $sig
+  Out-J @{ t = 'av'; mic = @($mic -split ';' | Where-Object { $_ }); cam = @($cam -split ';' | Where-Object { $_ }); micMuted = ($mm -eq 1); hasMic = ($mm -ge 0) }
+}
+
 function Get-Disk {
   $d = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
   Out-J @{ t = 'disk'; drives = @($d | ForEach-Object { @{ name = $_.Name; used = [int64]$_.Used; total = [int64]($_.Used + $_.Free) } }) }
@@ -212,6 +336,9 @@ while ($true) {
       }
       'radio' { Set-Radio $parts[1] ($parts[2] -eq 'on'); Start-Sleep -Milliseconds 400; Get-Radios $true }
       'radios' { Get-Radios $true }
+      'bright' { Get-Bright }
+      'setbright' { Set-Bright ([int]$parts[1]) }
+      'micmute' { [IslandNative]::ToggleMic(); $script:lastAv = ''; Get-Av }
       'mon'   { [IslandNative]::MonX = [int]$parts[1]; [IslandNative]::MonY = [int]$parts[2]; $lastFg = $null }
       'disk'  { Get-Disk }
       'quit'  { exit }
@@ -235,6 +362,7 @@ while ($true) {
   if ($i % 180 -eq 0) { Get-Disk }
   if ($i % 1100 -eq 5) { Load-Radios }   # recarrega a lista de rádios a cada ~3 min (e logo no início)
   if ($i % 18 -eq 9) { Get-Radios $false }
+  if ($i % 6 -eq 1) { Get-Av }
   Start-Sleep -Milliseconds 160
   $i++
 }

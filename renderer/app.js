@@ -2,7 +2,7 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const isl = $('#island');
 const WIN_W = 900;
-const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 500] };
+const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 540] };
 const FLOAT_GAP = 8; // distância do topo no estilo flutuante
 const COLLAPSED = [196, 32];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -25,6 +25,7 @@ function activity() {
   if (S.volFlash && S.volFlash.until > Date.now()) return 'vol';
   if (t.running || (t.left < t.total && t.left > 0)) return 'timer';
   if (S.claude?.working) return 'claude';
+  if (S.dl?.length) return 'download';
   if (S.speed.running) return 'speed';
   if (S.media?.has && S.media.playing) return 'media';
   return null;
@@ -32,9 +33,9 @@ function activity() {
 
 function render() {
   let mode, size;
-  if (S.alert) { mode = 'alerting'; size = [400, 84]; }
+  if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
   const transient = mode === 'compact' && ['notice', 'vol'].includes(activity());
@@ -79,6 +80,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 document.addEventListener('mousedown', e => {
   const el = e.target.closest('input:not([type=checkbox]):not([type=range]), textarea');
   if (!e.target.closest('#forecast, #weather')) $('#forecast')?.classList.remove('show');
+  if (!e.target.closest('#agenda, #next-ev')) $('#agenda')?.classList.remove('show');
   if (!el) return;
   if (!S.focused) { S.focused = true; window.ilha.focus(true); setTimeout(() => el.focus(), 40); }
 });
@@ -107,6 +109,7 @@ function onTabShown() {
   if (S.tab === 'casa') loadCasa();
   if (S.tab === 'sys') window.ilha.disk();
   if (S.tab === 'claude') renderClaude();
+  if (S.tab === 'home') askBright();
 }
 
 /* =================== aviso e alerta =================== */
@@ -119,16 +122,25 @@ function toast(msg) {
   clearTimeout(toastT); toastT = setTimeout(() => { t.classList.remove('show'); t.style.transform = 'translate(-50%, -40px)'; }, 1600);
 }
 let alertT;
-function showAlert(title, body, icon) {
-  S.alert = { title, body };
+// alerta grande: título, texto, detalhe (em fonte de código) e botões. Cada botão fecha o alerta e roda sua ação.
+function showAlert(title, body, icon, opts = {}) {
+  S.alert = { title, body, id: opts.id || null, size: opts.size || [opts.code ? 520 : opts.buttons?.length > 1 ? 470 : 400, opts.code ? 104 : 84] };
   $('#alert .a-text b').textContent = title;
-  $('#alert .a-text span').textContent = body;
+  const span = $('#alert .a-text span');
+  span.textContent = body;
+  if (opts.code) { const c = document.createElement('code'); c.textContent = opts.code; c.title = opts.code; span.appendChild(c); }
   $('#alert .a-icon').innerHTML = icon;
+  const box = $('#alert .a-btns'); box.innerHTML = '';
+  for (const b of opts.buttons || [{ label: 'OK', cls: 'primary' }]) {
+    const el = document.createElement('button');
+    el.textContent = b.label; el.className = b.cls || '';
+    el.addEventListener('click', () => { dismissAlert(); b.fn?.(); });
+    box.appendChild(el);
+  }
   S.open = false; render();
-  clearTimeout(alertT); alertT = setTimeout(dismissAlert, 12000);
+  clearTimeout(alertT); alertT = setTimeout(() => { opts.onTimeout?.(); dismissAlert(); }, opts.ms || 12000);
 }
-function dismissAlert() { S.alert = null; render(); }
-$('#alert .a-btn').addEventListener('click', dismissAlert);
+function dismissAlert() { clearTimeout(alertT); S.alert = null; render(); }
 
 function chime() {
   try {
@@ -268,7 +280,8 @@ function setMedia(m) {
       else { $('.m-art').classList.remove('has'); card.style.removeProperty('--art-bg'); }
     }
   }
-  tickMedia(); render();
+  if (m.art && m.art !== S.lastArt) { S.lastArt = m.art; artColor(m.art); }
+  tickMedia(); render(); syncPulse();
 }
 function mediaPos() {
   const m = S.media; if (!m) return 0;
@@ -367,6 +380,7 @@ function renderCompact() {
     R.innerHTML = `<b style="color:#d97757">${fmtT((Date.now() - c.startedAt) / 1000)}</b>`; R.dataset.k = '';
     return;
   }
+  if (a === 'download') return renderDownload(L, R);
   if (a === 'timer') {
     if (L.dataset.k !== 'timer') { L.innerHTML = `<span class="c-ico" style="background:rgba(255,159,10,.22);color:#ff9f0a">${IC.timer}</span><span style="color:#ff9f0a">${S.timer.running ? 'Foco' : 'Pausado'}</span>`; L.dataset.k = 'timer'; }
     L.lastChild.textContent = S.timer.running ? 'Foco' : 'Pausado';
@@ -422,6 +436,8 @@ window.ilha.onNative(m => {
   if (m.t === 'media') setMedia(m);
   else if (m.t === 'vol') onVol(m);
   else if (m.t === 'radios') onRadios(m);
+  else if (m.t === 'av') onAv(m);
+  else if (m.t === 'bright') onBright(m);
   else if (m.t === 'net') {
     push(hist.down, m.down); push(hist.up, m.up);
     const [d, du] = fmtRate(m.down), [u, uu] = fmtRate(m.up);
@@ -660,6 +676,7 @@ function renderClaude() {
   clRing('cl-ctx', c.ctx?.p, c.ctx?.size ? `de ${fmtTok(c.ctx.size)}` : '');
   $('#cl-model').textContent = c.model || '';
   $('#cl-hint').textContent = L ? `Atualizado ${ago(L.at)}` : 'Os limites chegam a cada resposta do Claude Code.';
+  renderClaudeExtras(c);
   $('#cl-log').innerHTML = (c.log || []).length ? c.log.map(l => `<div class="cl-item"><em>${new Date(l.t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</em><span title="${esc(l.project)}">${esc(l.text)}</span></div>`).join('')
     : '<div class="out-empty">Nada ainda.</div>';
 }
@@ -879,6 +896,8 @@ function fillSettings() {
   $$('#set-style button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.islandStyle || 'notch')));
   $$('#set-icolor button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.islandColor || 'black')));
   $('#set-ialpha').value = S.cfg.islandAlpha ?? 100; applyIAlpha(S.cfg.islandAlpha ?? 100);
+  $('#set-ics').value = S.cfg.icsUrl || '';
+  $('#set-pulse').checked = S.cfg.musicPulse !== false;
 }
 // estilo da ilha fechada: notch ou flutuante, preta ou do tema, e a opacidade
 function applyIAlpha(v) {
@@ -1041,6 +1060,213 @@ document.addEventListener('drop', e => {
   addFiles(card.id === 'shelf-card' ? 'shelf' : 'favs', paths);
 });
 
+
+/* =================== versão 1.4 =================== */
+const IC2 = {
+  mic: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
+  micOff: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M3 3l18 18"/></svg>',
+  cam: '<svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="M15.5 10.5 21 7.5v9l-5.5-3"/></svg>',
+  dl: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>',
+  shot: '<svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="3"/></svg>',
+  cal: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  gh: '<svg viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.7-.2.7-.5v-1.7c-2.7.6-3.3-1.2-3.3-1.2-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.1-.2-4.4-1.1-4.4-4.8 0-1 .4-1.9 1-2.6-.1-.2-.4-1.2.1-2.6 0 0 .8-.3 2.6 1a9 9 0 0 1 4.8 0c1.8-1.3 2.6-1 2.6-1 .5 1.4.2 2.4.1 2.6.6.7 1 1.6 1 2.6 0 3.7-2.3 4.6-4.4 4.8.3.3.6.9.6 1.8v2.6c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5z"/></svg>',
+  head: '<svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="2"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="2"/></svg>',
+};
+Object.assign(NOTE_IC, { mic: IC2.mic, cam: IC2.cam, dl: IC2.dl, shot: IC2.shot, head: IC2.head });
+
+/* ---- Claude: Permitir / Negar direto na ilha ---- */
+window.ilha.onPerm(p => {
+  chime();
+  showAlert('Claude quer permissão', `${p.title}${p.project ? ' · ' + p.project : ''}`, `<span style="color:${CLAUDE_C}">${NOTE_IC.claude}</span>`, {
+    id: 'perm:' + p.id, code: p.detail && p.detail !== p.title ? p.detail : '', ms: 30000,
+    buttons: [{ label: 'Negar', cls: 'deny', fn: () => window.ilha.permAnswer(p.id, false) }, { label: 'Permitir', cls: 'allow', fn: () => { window.ilha.permAnswer(p.id, true); toast('Permitido'); } }],
+  });
+});
+window.ilha.onPermClose(id => { if (S.alert?.id === 'perm:' + id) dismissAlert(); });
+
+/* ---- microfone e câmera em uso ---- */
+const appLabel = a => appName(a) || a;
+function renderAv() {
+  const av = S.av || { mic: [], cam: [] };
+  const mic = av.mic.length > 0, cam = av.cam.length > 0;
+  const dot = $('#pdot');
+  dot.classList.toggle('on', mic || cam); dot.classList.toggle('cam', cam);
+  let h = '';
+  if (cam) h += `<span class="av-chip cam" title="Câmera: ${esc(av.cam.map(appLabel).join(', '))}">${IC2.cam}<span>${esc(appLabel(av.cam[0]))}</span></span>`;
+  if (mic) h += `<span class="av-chip ${av.micMuted ? 'muted' : ''}" title="Microfone: ${esc(av.mic.map(appLabel).join(', '))}"><span>${esc(appLabel(av.mic[0]))}</span><button data-micmute title="${av.micMuted ? 'Ativar o microfone' : 'Silenciar o microfone'}">${av.micMuted ? IC2.micOff : IC2.mic}</button></span>`;
+  $('#av-chips').innerHTML = h;
+}
+$('#av-chips').addEventListener('click', e => { if (e.target.closest('[data-micmute]')) { window.ilha.media('micmute'); toast(S.av?.micMuted ? 'Microfone ativado' : 'Microfone silenciado'); } });
+function onAv(m) {
+  const prev = S.av || { mic: [], cam: [] };
+  S.av = m; renderAv();
+  if (m.cam.length && !prev.cam.length) notice('cam', '#30d158', 'Câmera em uso', appLabel(m.cam[0]), 3500);
+  else if (m.mic.length && !prev.mic.length) notice('mic', '#ff9f0a', 'Microfone em uso', appLabel(m.mic[0]), 3500);
+  if (prev.micMuted !== undefined && prev.micMuted !== m.micMuted && m.mic.length) notice('mic', m.micMuted ? '#ff453a' : '#ff9f0a', m.micMuted ? 'Microfone silenciado' : 'Microfone ativado', appLabel(m.mic[0]), 2500);
+}
+
+/* ---- brilho do monitor ---- */
+let brightT = 0, brightAsked = 0;
+function onBright(m) {
+  $('#bright-row').classList.toggle('na', m.kind === 'none');
+  if (m.value >= 0) { $('#bright').value = m.value; $('#bright').style.setProperty('--p', m.value + '%'); $('#bright-v').textContent = m.value + '%'; }
+}
+$('#bright').addEventListener('input', e => {
+  const v = Number(e.target.value);
+  e.target.style.setProperty('--p', v + '%'); $('#bright-v').textContent = v + '%';
+  clearTimeout(brightT); brightT = setTimeout(() => window.ilha.media('setbright ' + v), 120); // monitores por DDC/CI são lentos: manda só o último valor
+});
+function askBright() { if (Date.now() - brightAsked > 60000) { brightAsked = Date.now(); window.ilha.media('bright'); } }
+
+/* ---- bateria dos aparelhos Bluetooth ---- */
+window.ilha.onBtBat(list => {
+  const prev = new Set((S.btBat || []).map(d => d.name));
+  S.btBat = list;
+  const first = list[0];
+  if (first) { $('#ql-bt').textContent = `${first.name.split(' ')[0]} ${first.battery}% ›`; $('#ql-bt').title = list.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
+  else { $('#ql-bt').textContent = 'Bluetooth ›'; $('#ql-bt').title = 'Ver os dispositivos Bluetooth'; }
+  for (const d of list) if (!prev.has(d.name) && S.btBat !== null) notice('head', '#0a84ff', d.name, `Bateria ${d.battery}%`, 4000);
+});
+
+/* ---- downloads ao vivo ---- */
+window.ilha.onDownload(m => {
+  if (m.active) { const had = !!S.dl?.length; S.dl = m.active; if (!S.open && (had !== !!m.active.length || m.active.length)) render(); }
+  if (m.done) {
+    showAlert('Download concluído', m.done.name, `<span style="color:#64d2ff">${IC2.dl}</span>`, {
+      ms: 9000, buttons: [{ label: 'Mostrar', fn: () => window.ilha.reveal(m.done.path) }, { label: 'Abrir', cls: 'blue', fn: () => window.ilha.openPath(m.done.path) }],
+    });
+  }
+});
+function renderDownload(L, R) {
+  const d = S.dl[0];
+  if (L.dataset.k !== 'dl') { L.innerHTML = `<span class="c-ico" style="background:rgba(100,210,255,.2);color:#64d2ff">${IC2.dl}</span><span class="c-note" style="color:var(--t1);max-width:190px"></span>`; L.dataset.k = 'dl'; }
+  L.lastChild.textContent = S.dl.length > 1 ? `${S.dl.length} downloads` : d.name;
+  const [sv, su] = fmtRate(d.speed);
+  R.innerHTML = `<span style="color:var(--t3)">${fmtBytes(d.size)}</span><b style="color:#64d2ff">${sv} ${su}</b>`; R.dataset.k = '';
+}
+
+/* ---- print de uma área da tela ---- */
+$('#shelf-print').addEventListener('click', () => { close(); window.ilha.print(); });
+window.ilha.onPrinted(p => {
+  S.cfg.shelf = p.shelf; renderFiles('shelf');
+  notice('shot', '#ffffff', 'Print salvo', 'Está na prateleira, pronto para arrastar', 3500);
+});
+
+/* ---- ilha pulsando com a música + cor da capa ---- */
+const audio = { ctx: null, an: null, stream: null, data: null, raf: 0, lvl: 0, idleT: 0 };
+function artColor(src) {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas'); c.width = c.height = 24;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0, 24, 24);
+    const px = g.getImageData(0, 0, 24, 24).data; let best = null, bs = -1;
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], gg = px[i + 1], b = px[i + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+      const sat = mx ? (mx - mn) / mx : 0, score = sat * (mx / 255) * (mx > 60 ? 1 : .2);
+      if (score > bs) { bs = score; best = [r, gg, b]; }
+    }
+    if (best) isl.style.setProperty('--mc', `rgb(${best.join(',')})`);
+  };
+  img.src = src;
+}
+async function startAudio() {
+  if (audio.stream || S.cfg.musicPulse === false) return;
+  try {
+    const st = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: { width: 1, height: 1, frameRate: 1 } });
+    st.getVideoTracks().forEach(t => t.stop()); // só o som interessa
+    if (!st.getAudioTracks().length) return;
+    audio.stream = st; audio.ctx = new AudioContext();
+    audio.an = audio.ctx.createAnalyser(); audio.an.fftSize = 512; audio.an.smoothingTimeConstant = .6;
+    audio.ctx.createMediaStreamSource(st).connect(audio.an);
+    audio.data = new Uint8Array(audio.an.frequencyBinCount);
+    let last = 0;
+    const loop = t => {
+      audio.raf = requestAnimationFrame(loop);
+      if (t - last < 33) return; last = t;
+      audio.an.getByteFrequencyData(audio.data);
+      const band = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += audio.data[i]; return s / (b - a) / 255; };
+      const bass = band(1, 6);
+      audio.lvl = Math.max(bass, audio.lvl * .82);
+      isl.style.setProperty('--pulse', Math.min(1, Math.pow(audio.lvl, 1.6) * 1.4).toFixed(3));
+      // equalizador da ilha compacta segue o som de verdade
+      const bars = $$('#compact .eq i');
+      if (bars.length) { const bands = [band(1, 4), band(4, 12), band(12, 40), band(40, 120)]; bars.forEach((el, i) => { el.style.height = (22 + Math.min(1, bands[i] * 1.5) * 78) + '%'; }); }
+    };
+    audio.raf = requestAnimationFrame(loop);
+  } catch (_) { audio.stream = null; }
+}
+function stopAudio() {
+  cancelAnimationFrame(audio.raf);
+  audio.stream?.getTracks().forEach(t => t.stop()); audio.stream = null;
+  audio.ctx?.close().catch(() => {}); audio.ctx = null;
+  isl.style.setProperty('--pulse', 0);
+}
+function syncPulse() {
+  const playing = !!(S.media?.has && S.media.playing) && S.cfg.musicPulse !== false;
+  isl.classList.toggle('pulsing', playing);
+  $('#compact .eq')?.classList.toggle('live', playing && !!audio.stream);
+  clearTimeout(audio.idleT);
+  if (playing) startAudio();
+  else audio.idleT = setTimeout(stopAudio, 6000); // pausou: espera um pouco antes de soltar a captura
+}
+
+/* ---- agenda ---- */
+const fmtHM = t => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function dayLabel(t) {
+  const d = new Date(t), n = new Date(), tm = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+  if (d.toDateString() === n.toDateString()) return 'Hoje';
+  if (d.toDateString() === tm.toDateString()) return 'Amanhã';
+  const s = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' }); return s[0].toUpperCase() + s.slice(1);
+}
+function renderAgenda() {
+  const a = S.agenda || { events: [] }, now = Date.now();
+  const evs = (a.events || []).filter(e => e.end > now);
+  const next = evs.find(e => !e.allDay && e.start > now - 5 * 60e3) || evs[0];
+  $('#next-ev').innerHTML = next ? `<i></i><span><b>${next.allDay ? dayLabel(next.start) : (dayLabel(next.start) === 'Hoje' ? '' : dayLabel(next.start) + ' ') + fmtHM(next.start)}</b> · ${esc(next.title)}</span>` : '';
+  $('#ag-sub').textContent = a.error ? `Erro: ${a.error}` : evs.length ? `${evs.length} compromissos nos próximos dias` : '';
+  if (!S.cfg.icsUrl) { $('#ag-list').innerHTML = '<div class="ag-empty">Cole o link iCal da sua agenda em <b>Ajustes → Agenda</b>.<br>Google Agenda: Configurações → sua agenda → <b>Endereço secreto no formato iCal</b>.<br>Outlook: Configurações → Calendário → Calendários compartilhados → <b>Publicar</b> (link ICS).</div>'; return; }
+  let h = '', lastDay = '';
+  for (const e of evs.slice(0, 40)) {
+    const dl = dayLabel(e.start);
+    if (dl !== lastDay) { h += `<div class="ag-day">${dl}</div>`; lastDay = dl; }
+    const nowEv = e.start <= now && e.end > now;
+    h += `<div class="ag-ev ${nowEv ? 'now' : ''}"><em>${e.allDay ? 'Dia inteiro' : `${fmtHM(e.start)} – ${fmtHM(e.end)}`}</em><i></i><div><b>${esc(e.title)}</b>${e.where ? `<small>${esc(e.where)}</small>` : ''}</div>${e.link ? `<button class="join" data-link="${esc(e.link)}">Entrar</button>` : '<span></span>'}</div>`;
+  }
+  $('#ag-list').innerHTML = h || '<div class="ag-empty">Nada na agenda para os próximos dias.</div>';
+}
+window.ilha.onAgenda(a => { S.agenda = a; renderAgenda(); });
+$('#next-ev').addEventListener('click', () => { $('#forecast').classList.remove('show'); $('#agenda').classList.add('show'); });
+$('#ag-close').addEventListener('click', () => $('#agenda').classList.remove('show'));
+$('#ag-list').addEventListener('click', e => { const b = e.target.closest('[data-link]'); if (b) { window.ilha.open(b.dataset.link); close(); } });
+setInterval(renderAgenda, 60000);
+window.ilha.onAgendaAlert(e => {
+  chime();
+  const mins = Math.max(0, Math.round((e.start - Date.now()) / 60000));
+  showAlert(mins ? `Em ${mins} min: ${e.title}` : `Agora: ${e.title}`, `${fmtHM(e.start)} – ${fmtHM(e.end)}${e.where ? ' · ' + e.where : ''}`, `<span style="color:#ff453a">${IC2.cal}</span>`, {
+    ms: 60000, buttons: e.link ? [{ label: 'Depois' }, { label: 'Entrar', cls: 'blue', fn: () => window.ilha.open(e.link) }] : [{ label: 'OK', cls: 'primary' }],
+  });
+});
+
+/* ---- GitHub: teste falhou ---- */
+window.ilha.onGhFail(r => {
+  showAlert('Teste falhou no GitHub', `${r.repo} · ${r.name}${r.branch ? ' (' + r.branch + ')' : ''}`, `<span style="color:#ff6961">${IC2.gh}</span>`, {
+    ms: 20000, buttons: [{ label: 'Depois' }, { label: 'Ver', cls: 'blue', fn: () => window.ilha.open(r.url) }],
+  });
+});
+function renderClaudeExtras(c) {
+  const t = c.today || {};
+  $('#cl-today').innerHTML = `<span>Hoje: <b>${t.tasks || 0}</b> tarefa${t.tasks === 1 ? '' : 's'}</span><span><b>${fmtDurS(t.ms || 0).replace(/ \d+ s$/, '')}</b> trabalhando</span><span><b>${fmtTok(t.tokens || 0)}</b> tokens</span><span><b>${t.commits || 0}</b> commit${t.commits === 1 ? '' : 's'} · <b>${t.pushes || 0}</b> push</span>`;
+  $('#cl-gh').innerHTML = (c.gh || []).map(g => {
+    const cls = g.status !== 'completed' ? 'run' : g.conclusion === 'success' ? 'ok' : g.conclusion === 'failure' ? 'fail' : '';
+    return `<button class="${cls}" data-url="${esc(g.url)}" title="${esc(g.name)} · ${esc(g.conclusion || g.status)}"><i></i>${esc(g.repo)}</button>`;
+  }).join('');
+}
+$('#cl-gh').addEventListener('click', e => { const b = e.target.closest('[data-url]'); if (b) window.ilha.open(b.dataset.url); });
+
+/* ---- ajustes novos ---- */
+onEnter($('#set-ics'), async () => { S.cfg = await window.ilha.setCfg({ icsUrl: $('#set-ics').value.trim() }); toast($('#set-ics').value.trim() ? 'Carregando a agenda…' : 'Agenda removida'); });
+$('#set-pulse').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ musicPulse: e.target.checked }); syncPulse(); if (!e.target.checked) stopAudio(); });
+
 /* =================== início =================== */
 (async function init() {
   S.cfg = await window.ilha.getCfg();
@@ -1052,6 +1278,7 @@ document.addEventListener('drop', e => {
   S.conn = await window.ilha.conn();
   S.claude = await window.ilha.claudeState();
   window.ilha.media('radios');
+  S.agenda = await window.ilha.agenda(); renderAgenda();
   renderHistory(S.cfg.speedHistory);
   renderFiles('shelf'); renderFiles('favs');
   setGauge(0, 0);

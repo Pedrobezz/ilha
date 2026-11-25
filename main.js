@@ -1,11 +1,11 @@
 // Ilha: processo principal (janela, hover, ajudante nativo, teste de internet, SmartHouse)
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, globalShortcut, clipboard, Notification, shell } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, globalShortcut, clipboard, Notification, shell, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 
-const W = 900, H = 600; // tela transparente onde a ilha vive (inclui espaço para a sombra)
+const W = 900, H = 640; // tela transparente onde a ilha vive (inclui espaço para a sombra)
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 app.setAppUserModelId('com.pedrobez.ilha');
@@ -16,7 +16,7 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 // ---------- ajustes ----------
 const cfgFile = () => path.join(app.getPath('userData'), 'ilha.json');
-const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [], monitor: 'primary', shelf: [], favs: [], outages: [], liveAlerts: true, islandStyle: 'notch', islandColor: 'black', islandAlpha: 100, favIcons: {} };
+const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [], monitor: 'primary', shelf: [], favs: [], outages: [], liveAlerts: true, islandStyle: 'notch', islandColor: 'black', islandAlpha: 100, favIcons: {}, icsUrl: '', musicPulse: true };
 let cfg = { ...DEFAULTS };
 function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch (_) {} }
 let saveT = null;
@@ -54,6 +54,10 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.showInactive());
   win.on('blur', () => send('blur'));
+  // som do sistema (loopback) para a ilha pulsar com a música: só o áudio é usado, sem pedir permissão
+  win.webContents.session.setDisplayMediaRequestHandler((req, cb) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then(src => cb({ video: src[0], audio: 'loopback' })).catch(() => cb({}));
+  });
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
 
@@ -158,7 +162,7 @@ function claudeServer() {
   const http = require('http');
   const srv = http.createServer((req, res) => {
     const end = (code, msg = '') => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(msg); };
-    if (req.method !== 'POST' || (req.url !== '/claude' && req.url !== '/claude/status')) return end(404);
+    if (req.method !== 'POST' || !['/claude', '/claude/status', '/claude/permission'].includes(req.url)) return end(404);
     const key = String(req.headers['x-ilha-key'] || '');
     const same = k => !!k && key.length === k.length && require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(k));
     if (!same(cfg.claudeKey)) return end(401);
@@ -166,6 +170,7 @@ function claudeServer() {
     req.on('data', c => { size += c.length; if (size > 256e3) req.destroy(); else chunks.push(c); });
     req.on('end', () => {
       let j = {}; try { j = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (_) {}
+      if (req.url === '/claude/permission') return claudePermission(j, res);
       end(204);
       if (req.url === '/claude/status') return claudeStatus(j);
       const ev = String(j.hook_event_name || '');
@@ -178,6 +183,72 @@ function claudeServer() {
   });
   srv.on('error', () => {}); // porta ocupada: só não recebe avisos
   srv.listen(CLAUDE_PORT, '127.0.0.1');
+}
+
+// ---------- Permitir / Negar pela ilha (hook PermissionRequest) ----------
+// O hook fica esperando a resposta. Sem resposta em 30 s (ou com avisos desligados), devolve vazio
+// e o Claude mostra o pedido de permissão normal dele.
+const perms = new Map();
+function claudePermission(j, res) {
+  const empty = () => { if (!res.writableEnded) { res.writeHead(204); res.end(); } };
+  if (cfg.liveAlerts === false || !win || win.isDestroyed()) return empty();
+  const id = require('crypto').randomBytes(6).toString('hex');
+  const tool = String(j.tool_name || ''), inp = j.tool_input || {};
+  let detail = '';
+  if (inp.command) detail = String(inp.command);
+  else if (inp.file_path) detail = String(inp.file_path);
+  else if (inp.url) detail = String(inp.url);
+  else { try { detail = JSON.stringify(inp); } catch (_) {} }
+  const project = j.cwd ? base(j.cwd) : '';
+  const timer = setTimeout(() => { perms.delete(id); empty(); send('claudePermClose', id); }, 30000);
+  perms.set(id, { res, timer });
+  res.on('close', () => { if (perms.has(id)) { clearTimeout(timer); perms.delete(id); send('claudePermClose', id); } });
+  send('claudePerm', { id, tool, title: toolText(tool, inp), detail: detail.slice(0, 400), project });
+}
+function answerPermission(id, allow) {
+  const p = perms.get(id); if (!p) return;
+  clearTimeout(p.timer); perms.delete(id);
+  const decision = allow ? { behavior: 'allow' } : { behavior: 'deny', message: 'Negado pela Ilha' };
+  p.res.writeHead(200, { 'content-type': 'application/json' });
+  p.res.end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } }));
+}
+
+// ---------- resumo do dia do Claude ----------
+const today = () => new Date().toLocaleDateString('sv-SE'); // AAAA-MM-DD no fuso local
+function dayStats() {
+  cfg.claudeDaily = cfg.claudeDaily || {};
+  const d = today();
+  if (!cfg.claudeDaily[d]) {
+    cfg.claudeDaily[d] = { tasks: 0, ms: 0, tokens: 0, commits: 0, pushes: 0 };
+    for (const k of Object.keys(cfg.claudeDaily).sort().slice(0, -14)) delete cfg.claudeDaily[k];
+  }
+  return cfg.claudeDaily[d];
+}
+
+// ---------- GitHub: avisa quando um teste (Actions) falha nos seus repositórios ----------
+const GH = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'GitHub CLI', 'gh.exe');
+const gh = { runs: {}, list: [], ok: fs.existsSync(GH) };
+function ghApi(route) {
+  return new Promise(resolve => require('child_process').execFile(GH, ['api', route], { windowsHide: true, timeout: 20000 }, (err, out) => { try { resolve(err ? null : JSON.parse(out)); } catch (_) { resolve(null); } }));
+}
+async function ghLoop() {
+  if (!gh.ok) return;
+  const repos = await ghApi('/user/repos?sort=pushed&per_page=8');
+  if (Array.isArray(repos)) {
+    const recent = repos.filter(r => Date.now() - Date.parse(r.pushed_at) < 30 * 864e5);
+    const list = [];
+    for (const r of recent) {
+      const runs = await ghApi(`/repos/${r.full_name}/actions/runs?per_page=1`);
+      const run = runs?.workflow_runs?.[0]; if (!run) continue;
+      const item = { repo: r.name, name: run.name, status: run.status, conclusion: run.conclusion, url: run.html_url, branch: run.head_branch, at: Date.parse(run.updated_at) };
+      list.push(item);
+      const prev = gh.runs[r.full_name];
+      if (prev && prev.id !== run.id && run.conclusion === 'failure') send('ghfail', item);
+      gh.runs[r.full_name] = { id: run.id };
+    }
+    gh.list = list; claudeSend();
+  }
+  setTimeout(ghLoop, 5 * 60e3);
 }
 
 // ---------- Claude ao vivo: o que está fazendo, há quanto tempo, tokens e limites ----------
@@ -230,6 +301,7 @@ function claudeSummary() {
     tokensTask: s && s.taskBase ? spent(s.tokens) - s.taskBase.spent : 0, outTask: s && s.taskBase ? s.tokens.out - s.taskBase.out : 0,
     tokensSession: s ? spent(s.tokens) : 0, cacheSession: s ? s.tokens.cr : 0,
     limits: claude.limits, ctx: claude.ctx, model: claude.model, active: working.length, log: claude.log.slice(0, 12),
+    today: dayStats(), gh: gh.list, ghOk: gh.ok,
   };
 }
 let claudeSendT = null;
@@ -251,9 +323,16 @@ function claudeEvent(ev, j, project) {
     if (!s.working) { s.working = true; s.startedAt = s.startedAt && !s.endedAt ? s.startedAt : Date.now(); s.endedAt = 0; if (!s.taskBase) s.taskBase = { spent: spent(s.tokens), out: s.tokens.out }; }
     s.activity = toolText(j.tool_name, j.tool_input || {});
     claudeLog(s.activity, s.project);
+    const cmd = String(j.tool_input?.command || '');
+    if (/^(Bash|PowerShell)$/.test(j.tool_name) && /\bgit\b[^|;&]*\bcommit\b/.test(cmd)) { dayStats().commits++; saveCfg(); }
+    if (/^(Bash|PowerShell)$/.test(j.tool_name) && /\bgit\b[^|;&]*\bpush\b/.test(cmd)) { dayStats().pushes++; saveCfg(); }
   } else if (ev === 'Notification') {
     if (/permission|approval/i.test(String(j.message || '')) || j.notification_type === 'permission_prompt') { s.activity = 'Esperando sua permissão'; claudeLog(s.activity, s.project); }
   } else if (ev === 'Stop') {
+    const st = dayStats(); st.tasks++;
+    if (s.startedAt && s.working) st.ms += Date.now() - s.startedAt;
+    if (s.taskBase) st.tokens += Math.max(0, spent(s.tokens) - s.taskBase.spent);
+    saveCfg();
     s.working = false; s.endedAt = Date.now(); s.activity = 'Terminou';
     claudeLog(`Terminou em ${Math.max(1, Math.round((s.endedAt - (s.startedAt || s.endedAt)) / 60000))} min`, s.project);
   }
@@ -279,6 +358,157 @@ setInterval(() => {
   }
   if (changed) claudeSend();
 }, 3000);
+
+// ---------- bateria dos aparelhos Bluetooth (fones, mouse, controle) ----------
+let btLast = '';
+function btBatteryLoop() {
+  const script = path.join(__dirname, 'btbattery.ps1').replace('app.asar', 'app.asar.unpacked');
+  require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { windowsHide: true, timeout: 30000 }, (err, out) => {
+    let list = []; try { list = JSON.parse(String(out).trim() || '[]'); if (!Array.isArray(list)) list = [list]; } catch (_) {}
+    const sig = JSON.stringify(list);
+    if (sig !== btLast) { btLast = sig; send('btbat', list); }
+    setTimeout(btBatteryLoop, 45000);
+  });
+}
+
+// ---------- downloads ao vivo (Chrome/Edge: .crdownload, Firefox: .part) ----------
+const dl = { active: new Map(), watching: false, lastEvent: 0, timer: null };
+const isTemp = n => /\.(crdownload|part|partial|download)$/i.test(n);
+function dlScan() {
+  const dir = app.getPath('downloads');
+  let names = []; try { names = fs.readdirSync(dir); } catch (_) { return; }
+  const now = Date.now(), seen = new Set();
+  for (const n of names) {
+    if (!isTemp(n)) continue;
+    let st; try { st = fs.statSync(path.join(dir, n)); } catch (_) { continue; }
+    seen.add(n);
+    const cur = dl.active.get(n) || { name: n.replace(/\.(crdownload|part|partial|download)$/i, '').replace(/^Não confirmado \d+$/i, 'Baixando…').replace(/^Unconfirmed \d+$/i, 'Baixando…'), size: 0, speed: 0, at: now, start: now };
+    const dt = (now - cur.at) / 1000;
+    if (dt > 0) cur.speed = cur.speed * 0.5 + Math.max(0, (st.size - cur.size) / dt) * 0.5;
+    cur.size = st.size; cur.at = now; dl.active.set(n, cur);
+  }
+  // sumiu o temporário: o download terminou (ou foi cancelado). Procura o arquivo final mais recente.
+  for (const [n, cur] of dl.active) {
+    if (seen.has(n)) continue;
+    dl.active.delete(n);
+    let best = null;
+    for (const f of names) {
+      if (isTemp(f)) continue;
+      try { const st = fs.statSync(path.join(dir, f)); if (now - st.mtimeMs < 15000 && (!best || st.mtimeMs > best.t)) best = { f, t: st.mtimeMs, size: st.size }; } catch (_) {}
+    }
+    if (best && now - cur.start > 800) send('download', { done: { name: best.f, path: path.join(dir, best.f), size: best.size } });
+  }
+  send('download', { active: [...dl.active.values()].map(x => ({ name: x.name, size: x.size, speed: x.speed })) });
+  if (dl.active.size || now - dl.lastEvent < 8000) dl.timer = setTimeout(dlScan, 1000); else dl.timer = null;
+}
+function dlWatch() {
+  try {
+    fs.watch(app.getPath('downloads'), () => { dl.lastEvent = Date.now(); if (!dl.timer) dl.timer = setTimeout(dlScan, 300); });
+  } catch (_) {}
+  dlScan();
+}
+
+// ---------- print de uma área da tela: usa a ferramenta de recorte do Windows e guarda na prateleira ----------
+let printPoll = null;
+function takePrint() {
+  clearInterval(printPoll);
+  const sig = img => { if (img.isEmpty()) return ''; const b = img.toBitmap(); return `${img.getSize().width}x${img.getSize().height}:${b.length}:${b.subarray(0, 64).toString('hex')}`; };
+  const before = sig(clipboard.readImage());
+  shell.openExternal('ms-screenclip:');
+  const t0 = Date.now();
+  printPoll = setInterval(() => {
+    if (Date.now() - t0 > 90000) return clearInterval(printPoll);
+    const img = clipboard.readImage(), s = sig(img);
+    if (!s || s === before) return;
+    clearInterval(printPoll);
+    const dir = path.join(app.getPath('pictures'), 'Ilha');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    const d = new Date(), pad = n => String(n).padStart(2, '0');
+    const file = path.join(dir, `Print ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.png`);
+    try { fs.writeFileSync(file, img.toPNG()); } catch (_) { return; }
+    cfg.shelf = [...(cfg.shelf || []), file].slice(-40); saveCfg();
+    send('printed', { path: file, shelf: cfg.shelf });
+  }, 400);
+}
+
+// ---------- agenda (link iCal do Google Agenda ou do Outlook) ----------
+const agenda = { events: [], alerted: new Set(), error: '' };
+function icsParse(text, from, to) {
+  const lines = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').split(/\r?\n/);
+  const evs = []; let cur = null;
+  for (const l of lines) {
+    if (l === 'BEGIN:VEVENT') { cur = {}; continue; }
+    if (l === 'END:VEVENT') { if (cur) evs.push(cur); cur = null; continue; }
+    if (!cur) continue;
+    const i = l.indexOf(':'); if (i < 0) continue;
+    const [name, ...params] = l.slice(0, i).split(';'), val = l.slice(i + 1);
+    const p = Object.fromEntries(params.map(x => x.split('=')));
+    if (name === 'EXDATE') (cur.EXDATE = cur.EXDATE || []).push(...val.split(',').map(v => ({ v, p })));
+    else cur[name] = { v: val, p };
+  }
+  const unesc = s => String(s || '').replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
+  const parseDate = (d) => {
+    if (!d) return null;
+    const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/.exec(d.v); if (!m) return null;
+    const allDay = !m[4];
+    const t = m[7] ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+    return { t, allDay };
+  };
+  const link = e => (/(https:\/\/(?:meet\.google\.com|[\w.-]*zoom\.us|teams\.microsoft\.com|teams\.live\.com)\/[^\s"<>\\]+)/i.exec([e.URL?.v, e.LOCATION?.v, e.DESCRIPTION?.v].map(unesc).join(' ')) || [])[1] || '';
+  const out = [];
+  for (const e of evs) {
+    if (e.STATUS?.v === 'CANCELLED' || e['RECURRENCE-ID']) continue;
+    const s = parseDate(e.DTSTART); if (!s) continue;
+    const en = parseDate(e.DTEND), dur = en ? en.t - s.t : (s.allDay ? 864e5 : 3600e3);
+    const base = { title: unesc(e.SUMMARY?.v) || '(sem título)', where: unesc(e.LOCATION?.v), allDay: s.allDay, link: link(e) };
+    const ex = new Set((e.EXDATE || []).map(x => parseDate(x)?.t));
+    if (!e.RRULE) { if (s.t + dur >= from && s.t <= to) out.push({ ...base, start: s.t, end: s.t + dur }); continue; }
+    const r = Object.fromEntries(e.RRULE.v.split(';').map(x => x.split('=')));
+    const freq = r.FREQ, interval = +(r.INTERVAL || 1), count = r.COUNT ? +r.COUNT : Infinity, until = r.UNTIL ? parseDate({ v: r.UNTIL }).t : Infinity;
+    const days = r.BYDAY ? r.BYDAY.split(',').map(x => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(x.slice(-2))) : null;
+    const d0 = new Date(s.t); let n = 0;
+    for (let k = 0; k < 3700; k++) {
+      const d = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + k, d0.getHours(), d0.getMinutes(), d0.getSeconds());
+      const t = d.getTime(); if (t > until || t > to) break;
+      const weeks = Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(d0.getFullYear(), d0.getMonth(), d0.getDate() - d0.getDay())) / (7 * 864e5));
+      const months = (d.getFullYear() - d0.getFullYear()) * 12 + d.getMonth() - d0.getMonth();
+      let hit = false;
+      if (freq === 'DAILY') hit = k % interval === 0;
+      else if (freq === 'WEEKLY') hit = weeks % interval === 0 && (days ? days.includes(d.getDay()) : d.getDay() === d0.getDay());
+      else if (freq === 'MONTHLY') hit = months % interval === 0 && d.getDate() === d0.getDate();
+      else if (freq === 'YEARLY') hit = d.getMonth() === d0.getMonth() && d.getDate() === d0.getDate() && (d.getFullYear() - d0.getFullYear()) % interval === 0;
+      if (!hit) continue;
+      if (++n > count) break;
+      if (ex.has(t)) continue;
+      if (t + dur >= from) out.push({ ...base, start: t, end: t + dur });
+    }
+  }
+  return out.sort((a, b) => a.start - b.start).slice(0, 60);
+}
+async function agendaLoop() {
+  clearTimeout(agendaLoop.t);
+  const url = String(cfg.icsUrl || '').trim().replace(/^webcal:/i, 'https:');
+  if (!url) { agenda.events = []; agenda.error = ''; send('agenda', agenda); return; }
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const text = await r.text();
+    if (!text.includes('BEGIN:VCALENDAR')) throw new Error('O link não é de uma agenda iCal');
+    const now = Date.now();
+    agenda.events = icsParse(text, now - 3600e3, now + 8 * 864e5); agenda.error = '';
+  } catch (e) { agenda.error = e.message; }
+  send('agenda', agenda);
+  agendaLoop.t = setTimeout(agendaLoop, 10 * 60e3);
+}
+// aviso 10 minutos antes de cada compromisso
+setInterval(() => {
+  const now = Date.now();
+  for (const e of agenda.events) {
+    if (e.allDay) continue;
+    const key = e.title + e.start;
+    if (e.start - now <= 10 * 60e3 && e.start - now > -60e3 && !agenda.alerted.has(key)) { agenda.alerted.add(key); send('agendaAlert', e); }
+  }
+}, 20000);
 
 // ---------- ícones dos sites favoritos ----------
 async function siteIcon(url) {
@@ -506,12 +736,16 @@ function setupIpc() {
     if ('hideOnMax' in patch) send('covered', cfg.hideOnMax && st.covered);
     if ('monitor' in patch) placeWindow();
     if ('smarthouse' in patch) shEvents();
+    if ('icsUrl' in patch) agendaLoop();
     return cfg;
   });
   // só repassa comandos conhecidos ao ajudante
-  ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?|radio (wifi|bt) (on|off)|radios)$/.test(String(c))) helperCmd(c); });
+  ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?|radio (wifi|bt) (on|off)|radios|bright|setbright \d{1,3}|micmute)$/.test(String(c))) helperCmd(c); });
   ipcMain.handle('siteicon', (_, url) => /^https?:\/\//.test(String(url)) ? siteIcon(String(url)) : '');
   ipcMain.handle('claudeState', () => claudeSummary());
+  ipcMain.on('permAnswer', (_, { id, allow }) => answerPermission(String(id), !!allow));
+  ipcMain.on('print', () => takePrint());
+  ipcMain.handle('agenda', () => agenda);
   // painéis do Windows: lista de redes Wi-Fi (o mesmo da barra de tarefas) e dispositivos Bluetooth
   ipcMain.on('opensys', (_, what) => { const u = { wifi: 'ms-availablenetworks:', bt: 'ms-settings:bluetooth' }[what]; if (u) shell.openExternal(u); });
   ipcMain.handle('fileinfo', (_, paths) => Promise.all((paths || []).slice(0, 50).map(p => fileInfo(String(p)))));
@@ -573,6 +807,11 @@ app.whenReady().then(() => {
   setupTray();
   connLoop();
   claudeServer();
+  btBatteryLoop();
+  dlWatch();
+  agendaLoop();
+  setTimeout(ghLoop, 15000);
+  globalShortcut.register('Control+Alt+P', () => takePrint());
   shEvents();
   globalShortcut.register('Control+Alt+Space', () => send('toggle'));
   screen.on('display-metrics-changed', placeWindow);

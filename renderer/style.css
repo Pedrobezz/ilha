@@ -685,3 +685,77 @@ body.dragging .drop-hint { opacity: 1; }
 .qwrap { flex: 1; width: auto; min-width: 0; }
 .qlabel { max-width: 100%; font-size: 11px; }
 .qrow .netline { flex: 0 0 100%; flex-direction: row; justify-content: space-around; margin-top: 0; padding: 6px 10px; }
+
+/* ================= versão 1.4 ================= */
+/* alerta com vários botões */
+.a-btns { display: flex; gap: 8px; flex: none; }
+.a-btns button { padding: 8px 14px; border-radius: 99px; font-weight: 600; font-size: 13px; background: rgba(255, 255, 255, .12); color: var(--t1); transition: filter .2s, transform .25s var(--spring); white-space: nowrap; }
+.a-btns button:hover { filter: brightness(1.15); }
+.a-btns button:active { transform: scale(.93); }
+.a-btns button.primary { background: var(--orange); color: #000; }
+.a-btns button.allow { background: #30d158; color: #00230c; }
+.a-btns button.deny { background: rgba(255, 69, 58, .2); color: #ff6961; }
+.a-btns button.blue { background: var(--blue); color: #fff; }
+.a-text code { display: block; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 11.5px; color: var(--t2); background: rgba(255, 255, 255, .07); border-radius: 7px; padding: 4px 7px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ponto de microfone / câmera em uso (como no iPhone) */
+.pdot { position: absolute; right: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); opacity: 0; transform: scale(.4); transition: opacity .3s, transform .4s var(--spring); pointer-events: none; z-index: 2; }
+.pdot.cam { background: var(--green); box-shadow: 0 0 8px var(--green); }
+#island.collapsed .pdot.on { opacity: 1; transform: none; }
+#island.compact .pdot.on { opacity: 1; transform: none; right: 5px; width: 5px; height: 5px; margin-top: -2.5px; }
+.av-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; background: rgba(255, 159, 10, .18); color: var(--orange); white-space: nowrap; max-width: 150px; }
+.av-chip.cam { background: rgba(48, 209, 88, .18); color: var(--green); }
+.av-chip span { overflow: hidden; text-overflow: ellipsis; }
+.av-chip button { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .25); color: inherit; flex: none; }
+.av-chip button svg { width: 12px; height: 12px; }
+.av-chip.muted { background: rgba(255, 69, 58, .2); color: #ff6961; }
+.bar-r { width: auto; min-width: 86px; }
+
+/* brilho */
+.m-bright .sun { width: 26px; height: 26px; display: grid; place-items: center; color: var(--t2); }
+.m-bright .sun svg { width: 17px; height: 17px; }
+.m-bright.na { display: none; }
+.media-card { gap: 9px; }
+
+/* ilha pulsando com a música (cor da capa) */
+#island { --mc: #ff9f0a; --pulse: 0; }
+#island.pulsing:not(.expanded) { box-shadow: 0 0 calc(4px + var(--pulse) * 26px) calc(var(--pulse) * 3px) color-mix(in srgb, var(--mc) calc(25% + var(--pulse) * 60%), transparent); }
+#island.pulsing:not(.expanded) .eq i { background: var(--mc); }
+.eq.live i { animation: none !important; transition: height .08s linear; }
+
+/* agenda */
+.next-ev { margin-top: 8px; display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--t2); text-align: left; padding: 5px 8px; margin-left: -8px; border-radius: 9px; transition: background .2s; min-height: 22px; max-width: 100%; }
+.next-ev:hover { background: rgba(255, 255, 255, .06); }
+.next-ev:empty { display: none; }
+.next-ev i { width: 3px; height: 14px; border-radius: 2px; background: var(--red); flex: none; }
+.next-ev b { color: var(--t1); font-weight: 600; }
+.next-ev span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.week { margin-top: 10px; }
+.ag-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scrollbar-width: none; }
+.ag-list::-webkit-scrollbar { display: none; }
+.ag-day { font-size: 11px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: .06em; margin: 8px 0 2px 4px; }
+.ag-day:first-child { margin-top: 0; }
+.ag-ev { display: grid; grid-template-columns: 92px 4px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, .04); font-size: 12.5px; }
+.ag-ev em { font-style: normal; color: var(--t2); font-variant-numeric: tabular-nums; }
+.ag-ev i { width: 4px; height: 26px; border-radius: 2px; background: var(--red); }
+.ag-ev div { min-width: 0; }
+.ag-ev b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-ev small { display: block; color: var(--t3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-ev.now { background: rgba(255, 69, 58, .12); }
+.ag-ev .join { padding: 5px 12px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--blue); }
+.ag-empty { color: var(--t3); font-size: 12.5px; text-align: center; padding: 30px 10px; line-height: 1.5; }
+
+/* atalhos: botão de print */
+.card-acts { display: flex; gap: 12px; }
+
+/* Claude: resumo do dia e GitHub */
+.cl-today { position: relative; font-size: 12px; color: var(--t2); display: flex; flex-wrap: wrap; gap: 6px; }
+.cl-today span { padding: 4px 9px; border-radius: 99px; background: rgba(255, 255, 255, .06); }
+.cl-today b { color: var(--t1); font-weight: 600; }
+.cl-gh { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 8px; }
+.cl-gh button { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: rgba(255, 255, 255, .06); color: var(--t2); }
+.cl-gh button.ok i { background: var(--green); }
+.cl-gh button.fail { background: rgba(255, 69, 58, .16); color: #ff6961; }
+.cl-gh button.fail i { background: var(--red); }
+.cl-gh button.run i { background: var(--orange); animation: pulse 1s infinite; }
+.cl-gh i { width: 6px; height: 6px; border-radius: 50%; background: var(--t3); }
