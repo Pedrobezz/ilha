@@ -1,0 +1,18 @@
+{
+  "name": "ilha",
+  "productName": "Ilha",
+  "version": "1.0.0",
+  "description": "Ilha dinâmica para o Windows, no topo da tela, estilo Apple",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Pedro Bez",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.2.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.1.0"
+  }
+}

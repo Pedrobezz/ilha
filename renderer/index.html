@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src https://api.open-meteo.com https://geocoding-api.open-meteo.com">
+<title>Ilha</title>
+<link rel="stylesheet" href="../node_modules/@fontsource-variable/inter/index.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="island" class="collapsed" data-tab="home">
+  <i class="ear l"></i><i class="ear r"></i>
+  <div class="tint"></div>
+  <div class="sheen"></div>
+
+  <!-- atividade ao vivo (ilha compacta) -->
+  <div id="compact">
+    <div class="c-left"></div>
+    <div class="c-right"></div>
+  </div>
+
+  <!-- alerta (ex.: timer acabou) -->
+  <div id="alert">
+    <div class="a-icon"></div>
+    <div class="a-text"><b></b><span></span></div>
+    <button class="a-btn">OK</button>
+  </div>
+
+  <!-- painel expandido -->
+  <div id="panel">
+    <header class="bar r0">
+      <div class="bar-l"><span id="bar-time">--:--</span></div>
+      <nav id="tabs">
+        <span class="tab-pill"></span>
+        <button data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Início</span></button>
+        <button data-tab="net"><svg viewBox="0 0 24 24"><path d="M12 13.5 16.5 9"/><path d="M3.5 17a9 9 0 1 1 17 0"/><circle cx="12" cy="13.5" r="1.3" fill="currentColor"/></svg><span>Internet</span></button>
+        <button data-tab="sys"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg><span>Sistema</span></button>
+        <button data-tab="casa"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg><span>Casa</span></button>
+        <button data-tab="tools"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg><span>Foco</span></button>
+        <button data-tab="set"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Ajustes</span></button>
+      </nav>
+      <div class="bar-r" id="bar-status"></div>
+    </header>
+
+    <div class="pages">
+      <!-- INÍCIO -->
+      <section class="page" data-page="home">
+        <div class="home-grid">
+          <div class="card clock-card r1">
+            <div class="clock" id="clock">--:--</div>
+            <div class="date" id="date"></div>
+            <div class="week" id="week"></div>
+            <div class="weather" id="weather">
+              <div class="w-icon"></div>
+              <div class="w-main"><b class="w-temp">--°</b><span class="w-desc">Carregando clima…</span></div>
+              <div class="w-side"><span class="w-city"></span><span class="w-mm"></span></div>
+            </div>
+          </div>
+
+          <div class="card media-card r2" id="media">
+            <div class="m-top">
+              <div class="m-art"><div class="m-art-ph"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><img alt=""></div>
+              <div class="m-info"><b class="m-title">Nada tocando</b><span class="m-artist">Abra uma música ou vídeo</span><span class="m-app"></span></div>
+              <div class="eq"><i></i><i></i><i></i><i></i></div>
+            </div>
+            <div class="m-prog"><span class="m-pos">0:00</span><div class="track"><i></i></div><span class="m-end">0:00</span></div>
+            <div class="m-ctrl">
+              <button data-m="vdown" class="sm" title="Diminuir volume"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/></svg></button>
+              <button data-m="prev" title="Anterior"><svg viewBox="0 0 24 24" class="fill"><path d="M11 12 20 5.5v13zM2 12l9-6.5v13z"/></svg></button>
+              <button data-m="play" class="big" title="Tocar/pausar"><svg viewBox="0 0 24 24" class="fill ic-play"><path d="M7 4.5v15l13-7.5z"/></svg><svg viewBox="0 0 24 24" class="fill ic-pause"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg></button>
+              <button data-m="next" title="Próxima"><svg viewBox="0 0 24 24" class="fill"><path d="M13 12 4 5.5v13zM22 12l-9-6.5v13z"/></svg></button>
+              <button data-m="vup" class="sm" title="Aumentar volume"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18.5 6.5a8 8 0 0 1 0 11"/></svg></button>
+            </div>
+          </div>
+
+          <div class="card stats-card r3">
+            <div class="rings">
+              <div class="ring" id="ring-cpu" style="--c:#64d2ff"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>0%</b><span>CPU</span></div>
+              <div class="ring" id="ring-mem" style="--c:#bf5af2"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>0%</b><span>RAM</span></div>
+              <div class="ring" id="ring-bat" style="--c:#30d158"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>–</b><span>Bateria</span></div>
+            </div>
+            <div class="netline">
+              <div><svg viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></svg><b id="h-down">0</b><span id="h-down-u">KB/s</span></div>
+              <div><svg viewBox="0 0 24 24"><path d="M12 20V4M6 10l6-6 6 6"/></svg><b id="h-up">0</b><span id="h-up-u">KB/s</span></div>
+            </div>
+            <button class="quick" data-go="net"><svg viewBox="0 0 24 24"><path d="M12 13.5 16.5 9"/><path d="M3.5 17a9 9 0 1 1 17 0"/></svg>Testar internet</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- INTERNET -->
+      <section class="page" data-page="net">
+        <div class="net-grid">
+          <div class="gauge-wrap r1">
+            <svg class="gauge" viewBox="0 0 200 200">
+              <defs>
+                <linearGradient id="gg" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#5e5ce6"/><stop offset=".55" stop-color="#0a84ff"/><stop offset="1" stop-color="#64d2ff"/></linearGradient>
+                <linearGradient id="gu" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#bf5af2"/><stop offset="1" stop-color="#ff375f"/></linearGradient>
+                <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+              </defs>
+              <path class="g-bg" d="M 43.4 156.6 A 80 80 0 1 1 156.6 156.6"/>
+              <path class="g-glow" filter="url(#glow)" d="M 43.4 156.6 A 80 80 0 1 1 156.6 156.6"/>
+              <path class="g-val" d="M 43.4 156.6 A 80 80 0 1 1 156.6 156.6"/>
+              <g class="g-ticks"></g>
+            </svg>
+            <div class="g-center">
+              <span class="g-phase" id="g-phase">Pronto</span>
+              <b class="g-num" id="g-num">0</b>
+              <span class="g-unit" id="g-unit">Mbps</span>
+            </div>
+            <button id="st-btn" class="go-btn"><span>Iniciar</span></button>
+          </div>
+          <div class="net-side r2">
+            <div class="st-cards">
+              <div class="st-card" id="st-ping"><span><svg viewBox="0 0 24 24"><path d="M4 12h3l2-6 4 12 2-6h5"/></svg>Ping</span><b>–</b><em>ms</em></div>
+              <div class="st-card" id="st-jit"><span><svg viewBox="0 0 24 24"><path d="M3 12c2-5 4-5 6 0s4 5 6 0 4-5 6 0"/></svg>Variação</span><b>–</b><em>ms</em></div>
+              <div class="st-card dl" id="st-down"><span><svg viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></svg>Download</span><b>–</b><em>Mbps</em></div>
+              <div class="st-card ul" id="st-up"><span><svg viewBox="0 0 24 24"><path d="M12 20V4M6 10l6-6 6 6"/></svg>Upload</span><b>–</b><em>Mbps</em></div>
+            </div>
+            <div class="isp" id="isp"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span>Provedor e servidor aparecem durante o teste</span></div>
+            <div class="hist" id="hist"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SISTEMA -->
+      <section class="page" data-page="sys">
+        <div class="sys-grid">
+          <div class="card sc r1" style="--c:#64d2ff"><div class="sc-h"><span>Processador</span><b id="s-cpu">0%</b></div><svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none"><path class="fillp" id="sp-cpu-f"/><path id="sp-cpu"/></svg><small id="s-cpuname"></small></div>
+          <div class="card sc r1" style="--c:#bf5af2"><div class="sc-h"><span>Memória</span><b id="s-mem">0%</b></div><svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none"><path class="fillp" id="sp-mem-f"/><path id="sp-mem"/></svg><small id="s-memtxt"></small></div>
+          <div class="card sc r2" style="--c:#30d158"><div class="sc-h"><span>Rede</span><b id="s-net">0 KB/s</b></div><svg class="spark" viewBox="0 0 100 34" preserveAspectRatio="none"><path class="fillp" id="sp-net-f"/><path id="sp-net"/><path id="sp-netu" class="alt"/></svg><small id="s-nettxt">↓ 0 · ↑ 0</small></div>
+          <div class="card sc r2" style="--c:#ff9f0a"><div class="sc-h"><span>Armazenamento</span></div><div id="disks" class="disks"></div></div>
+          <div class="card sc r3" style="--c:#30d158"><div class="sc-h"><span>Bateria</span><b id="s-bat">–</b></div><div class="batt"><div class="batt-body"><i id="s-batfill"></i></div><span class="batt-tip"></span></div><small id="s-battxt">Sem bateria (PC de mesa)</small></div>
+          <div class="card sc r3 info"><div class="sc-h"><span>Este PC</span></div><dl><dt>Nome</dt><dd id="s-host">–</dd><dt>IP local</dt><dd id="s-ip">–</dd><dt>Ligado há</dt><dd id="s-up">–</dd><dt>Núcleos</dt><dd id="s-cores">–</dd></dl></div>
+        </div>
+      </section>
+
+      <!-- CASA (SmartHouse) -->
+      <section class="page" data-page="casa">
+        <div id="casa-setup" class="casa-setup r1">
+          <div class="cs-logo"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M12 17.5v-3M9.5 13a3.5 3.5 0 0 1 5 0"/></svg></div>
+          <h3>Conecte o SmartHouse</h3>
+          <p>No SmartHouse, abra <b>Ajustes → Celular</b>, ative o acesso e copie o link do QR code. Cole aqui:</p>
+          <div class="cs-row"><input id="sh-link" placeholder="http://192.168.0.10:8787/?k=…" spellcheck="false"><button id="sh-save" class="pill-btn">Conectar</button></div>
+          <span class="cs-err" id="sh-err"></span>
+        </div>
+        <div id="casa-main" class="casa-main">
+          <div class="casa-top r1">
+            <div class="casa-stat"><span class="dot"></span><b id="sh-power">0 W</b><span id="sh-count">agora</span></div>
+            <div class="scenes" id="sh-scenes"></div>
+          </div>
+          <div class="devs r2" id="sh-devs"></div>
+        </div>
+      </section>
+
+      <!-- FOCO -->
+      <section class="page" data-page="tools">
+        <div class="tools-grid">
+          <div class="card timer-card r1">
+            <div class="t-ring">
+              <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52"/><circle class="v" id="t-arc" cx="60" cy="60" r="52"/></svg>
+              <div class="t-c"><b id="t-time">25:00</b><span id="t-label">Pomodoro</span></div>
+            </div>
+            <div class="t-presets">
+              <button data-min="1">1</button><button data-min="5">5</button><button data-min="15">15</button><button data-min="25" class="on">25</button><button data-min="50">50</button>
+            </div>
+            <div class="t-btns"><button id="t-reset" class="circle gray" title="Zerar"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button><button id="t-go" class="circle orange"><span>Iniciar</span></button></div>
+          </div>
+          <div class="card clip-card r2">
+            <div class="card-h"><span>Área de transferência</span><button id="clip-clear" class="link">Limpar</button></div>
+            <div class="clips" id="clips"></div>
+          </div>
+          <div class="card notes-card r3">
+            <div class="card-h"><span>Notas rápidas</span><em id="notes-saved"></em></div>
+            <textarea id="notes" placeholder="Escreva algo…" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section class="page" data-page="set">
+        <div class="set-grid">
+          <div class="group r1">
+            <label class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></span><span class="rt">Cidade do clima</span><input id="set-city" placeholder="Automática" spellcheck="false"></label>
+            <div class="row"><span class="ri" style="--c:#64d2ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></span><span class="rt">Transparência</span><div class="slide-wrap"><svg viewBox="0 0 24 24" class="sl-ic"><rect x="5" y="5" width="14" height="14" rx="3.5" fill="currentColor"/></svg><input type="range" class="slider" id="set-glass" min="0" max="70" step="1"><svg viewBox="0 0 24 24" class="sl-ic"><rect x="5" y="5" width="14" height="14" rx="3.5" stroke-dasharray="2.5 2.5"/></svg><b id="set-glass-v">22%</b></div></div>
+            <div class="row"><span class="ri" style="--c:linear-gradient(135deg,#e8794a,#4a6ae8)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1" fill="currentColor"/></svg></span><span class="rt">Tema</span><div class="swatches" id="set-theme"></div></div>
+            <label class="row"><span class="ri" style="--c:#5e5ce6"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/></svg></span><span class="rt">Esconder com janela maximizada</span><input type="checkbox" class="switch" id="set-hide"></label>
+            <label class="row"><span class="ri" style="--c:#30d158"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Iniciar com o Windows</span><input type="checkbox" class="switch" id="set-start"></label>
+          </div>
+          <div class="group r2">
+            <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span><span class="rt">Link do SmartHouse</span><input id="set-sh" placeholder="Detectar neste PC" spellcheck="false"></label>
+            <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span><span class="rt">Abrir pelo teclado</span><span class="kbd"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espaço</kbd></span></div>
+            <div class="row"><span class="ri" style="--c:#ff453a"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Fechar a Ilha</span><button id="set-quit" class="pill-btn danger">Sair</button></div>
+          </div>
+          <p class="foot r3">Ilha <span id="ver"></span> · passe o mouse no topo da tela para abrir</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
