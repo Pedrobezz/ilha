@@ -20,6 +20,16 @@ Uma "ilha dinâmica" para o Windows: fica no topo da tela, no centro, como o not
 - Com algo acontecendo, a ilha fechada vira uma **atividade ao vivo**: música tocando (capa + equalizador), timer de foco (contagem) ou teste de internet (velocidade).
 - **Indicador de volume** estilo iPhone ao usar as teclas de volume, e **avisos ao vivo**: carregador, bateria fraca, internet caiu/voltou e regras do SmartHouse que dispararam.
 
+## Avisos do Claude Code
+
+A Ilha mostra quando o Claude Code **termina** uma resposta (aviso compacto) e quando ele **pede permissão** ou espera você (alerta com som). Funciona por hooks do Claude Code em `~/.claude/settings.json` (`Stop` e `Notification`), que enviam o evento para `http://127.0.0.1:47823/claude`:
+
+```json
+{ "type": "command", "command": "curl -s -m 2 -o /dev/null -X POST -H \"x-ilha-key: $(cat ~/.ilha/claude-key 2>/dev/null)\" -H \"content-type: application/json\" --data-binary @- http://127.0.0.1:47823/claude 2>/dev/null || true" }
+```
+
+O receptor só aceita conexões do próprio PC e exige a chave, que a Ilha grava em `~/.ilha/claude-key` (fora do `%APPDATA%`, porque o app do Claude para Windows é empacotado e enxerga outra cópia do `%APPDATA%`). Com a Ilha fechada, o hook não faz nada.
+
 ## Abas
 
 - **Início:** relógio, semana, clima (clique para ver as próximas 12 horas e 7 dias), música/vídeo tocando com controles, barra clicável para avançar e volume real do Windows, CPU, RAM, bateria e rede.

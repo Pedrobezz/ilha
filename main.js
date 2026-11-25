@@ -160,7 +160,8 @@ function claudeServer() {
     const end = (code, msg = '') => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(msg); };
     if (req.method !== 'POST' || req.url !== '/claude') return end(404);
     const key = String(req.headers['x-ilha-key'] || '');
-    if (!cfg.claudeKey || key.length !== cfg.claudeKey.length || !require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(cfg.claudeKey))) return end(401);
+    const same = k => !!k && key.length === k.length && require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(k));
+    if (!same(cfg.claudeKey)) return end(401);
     let size = 0; const chunks = [];
     req.on('data', c => { size += c.length; if (size > 256e3) req.destroy(); else chunks.push(c); });
     req.on('end', () => {
@@ -418,7 +419,14 @@ function setupTray() {
 
 app.whenReady().then(() => {
   loadCfg();
-  if (!cfg.claudeKey) { cfg.claudeKey = require('crypto').randomBytes(18).toString('base64url'); saveCfg(); }
+  if (!cfg.claudeKey) { cfg.claudeKey = require('crypto').randomBytes(18).toString('base64url'); try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} }
+  // a chave também vai para ~/.ilha/claude-key, que o hook do Claude Code lê na hora de enviar.
+  // (fora do %APPDATA% de propósito: apps empacotados, como o Claude para Windows, enxergam outra cópia do %APPDATA%)
+  try {
+    const dir = path.join(os.homedir(), '.ilha');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'claude-key'), cfg.claudeKey);
+  } catch (_) {}
   // versão instalada: regrava o "iniciar com o Windows" apontando para o .exe instalado
   if (app.isPackaged && cfg.startup) app.setLoginItemSettings({ openAtLogin: true });
   createWindow();
