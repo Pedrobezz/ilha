@@ -1,6 +1,8 @@
 /* ============ Ilha · visual estilo Apple (vidro escuro, molas suaves) ============ */
 @property --bgc { syntax: '<color>'; inherits: true; initial-value: #000; }
 @property --er { syntax: '<length>'; inherits: true; initial-value: 12px; }
+@property --topc { syntax: '<color>'; inherits: true; initial-value: #000; }
+@property --edgec { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, 0); }
 
 :root {
   --spring: cubic-bezier(.28, 1.36, .42, 1);
@@ -33,31 +35,46 @@ svg.fill { fill: currentColor; stroke: none; }
   position: absolute; top: 0; left: 50%;
   width: var(--w); height: var(--h);
   transform: translateX(-50%);
-  background: var(--bgc);
+  /* faixa de cima escura e contínua (mesma cor das orelhas) que se dissolve no vidro */
+  background: linear-gradient(180deg, var(--topc) 0, var(--topc) var(--er), var(--bgc) calc(var(--er) + 56px));
   border-radius: 0 0 var(--r) var(--r);
   transition:
     width .62s var(--spring), height .62s var(--spring), border-radius .62s var(--soft),
-    --bgc .45s ease, --er .5s var(--soft), box-shadow .5s ease,
+    --bgc .45s ease, --topc .45s ease, --edgec .5s ease, --er .5s var(--soft), box-shadow .5s ease,
     transform .5s var(--soft), opacity .35s ease;
   will-change: width, height;
 }
 #island.collapsed, #island.compact {
   transition:
     width .46s var(--soft), height .46s var(--soft), border-radius .46s var(--soft),
-    --bgc .35s ease, --er .4s var(--soft), box-shadow .3s ease, transform .5s var(--soft), opacity .35s ease;
+    --bgc .35s ease, --topc .35s ease, --edgec .25s ease, --er .4s var(--soft), box-shadow .3s ease, transform .5s var(--soft), opacity .35s ease;
 }
 #island.expanded {
   --bgc: rgba(20, 20, 24, var(--alpha, .78)); --er: 22px; --r: 38px;
-  box-shadow: 0 30px 70px -18px rgba(0, 0, 0, .7), 0 0 0 .5px rgba(255, 255, 255, .07);
+  --topc: rgba(14, 14, 17, max(var(--alpha, .78), .94));
+  --edgec: rgba(255, 255, 255, .13);
+  box-shadow: 0 30px 70px -18px rgba(0, 0, 0, .7);
 }
 #island.compact { --r: 18px; }
 #island.alerting { --r: 32px; --er: 16px; box-shadow: 0 20px 50px -14px rgba(0, 0, 0, .7); }
 #island.hidden-top { transform: translate(-50%, calc(-100% - 6px)); opacity: 0; }
 
 /* "orelhas" côncavas que fundem a ilha na borda da tela, como o notch do MacBook */
-.ear { position: absolute; top: 0; width: var(--er); height: var(--er); pointer-events: none; }
-.ear.l { left: calc(-1 * var(--er) + .5px); background: radial-gradient(circle at 0 100%, transparent calc(var(--er) - .5px), var(--bgc) var(--er)); }
-.ear.r { right: calc(-1 * var(--er) + .5px); background: radial-gradient(circle at 100% 100%, transparent calc(var(--er) - .5px), var(--bgc) var(--er)); }
+/* a curva tem o mesmo contorno da ilha: o traço do arco termina exatamente onde começa a borda lateral */
+.ear { position: absolute; top: 0; width: var(--er); height: var(--er); pointer-events: none; z-index: 1; }
+.ear.l {
+  left: calc(-1 * var(--er));
+  background: radial-gradient(circle at 0 100%, transparent calc(var(--er) - .4px), var(--edgec) var(--er), var(--edgec) calc(var(--er) + .6px), var(--topc) calc(var(--er) + 1.2px));
+}
+.ear.r {
+  right: calc(-1 * var(--er));
+  background: radial-gradient(circle at 100% 100%, transparent calc(var(--er) - .4px), var(--edgec) var(--er), var(--edgec) calc(var(--er) + .6px), var(--topc) calc(var(--er) + 1.2px));
+}
+/* contorno lateral e de baixo: começa na altura em que a curva termina, em vez de subir reto até o topo */
+.edge {
+  position: absolute; left: 0; right: 0; top: var(--er); bottom: 0; pointer-events: none; z-index: 1;
+  border: 1px solid var(--edgec); border-top: 0; border-radius: 0 0 var(--r) var(--r);
+}
 
 /* brilho do vidro */
 .sheen {
@@ -66,7 +83,7 @@ svg.fill { fill: currentColor; stroke: none; }
     radial-gradient(120% 70% at 50% -10%, rgba(255, 255, 255, .09), transparent 60%),
     radial-gradient(60% 50% at 0% 100%, rgba(100, 210, 255, .07), transparent 70%),
     radial-gradient(60% 50% at 100% 100%, rgba(191, 90, 242, .07), transparent 70%);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .09), inset 1px 0 0 rgba(255, 255, 255, .04), inset -1px 0 0 rgba(255, 255, 255, .04);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 14px, #000 60px);
 }
 #island.expanded .sheen { opacity: 1; }
 
@@ -430,7 +447,7 @@ kbd { font: inherit; font-size: 11.5px; font-weight: 600; padding: 3px 7px; bord
   position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
   background: var(--theme, none);
   /* o topo continua escuro para emendar com as "orelhas" e a borda da tela */
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, .55) 26px, #000 70px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, transparent 20px, rgba(0, 0, 0, .6) 46px, #000 90px);
   transition: opacity .55s ease;
 }
 #island.expanded .tint { opacity: calc(var(--alpha, .78) * .9); }
