@@ -37,8 +37,9 @@ function render() {
   isl.style.setProperty('--w', size[0] + 'px');
   isl.style.setProperty('--h', size[1] + 'px');
   S.size = size;
-  const zone = hidden ? COLLAPSED : size;
-  window.ilha.setRect({ x: (WIN_W - zone[0]) / 2, y: 0, w: zone[0], h: zone[1] });
+  // escondida: só a borda de cima da tela (1 px) abre a ilha, para não atrapalhar as abas do Chrome
+  if (hidden) window.ilha.setRect({ x: (WIN_W - COLLAPSED[0]) / 2, y: 0, w: COLLAPSED[0], h: 1, edge: true });
+  else window.ilha.setRect({ x: (WIN_W - size[0]) / 2, y: 0, w: size[0], h: size[1] });
   if (mode === 'compact') renderCompact();
 }
 
@@ -56,7 +57,8 @@ function close() {
 window.ilha.onHover(h => {
   S.hover = h;
   clearTimeout(openT); clearTimeout(closeT);
-  if (h) { if (S.alert) return; openT = setTimeout(() => open(), S.open ? 0 : 70); }
+  // escondida, precisa "encostar" um instante na borda: uma passada rápida para clicar numa aba não abre
+  if (h) { if (S.alert) return; openT = setTimeout(() => open(), S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : 70); }
   else if (S.open && !S.focused) closeT = setTimeout(close, 380);
 });
 window.ilha.onBlur(() => { if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });

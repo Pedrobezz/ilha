@@ -23,7 +23,7 @@ let saveT = null;
 function saveCfg() { clearTimeout(saveT); saveT = setTimeout(() => { try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} }, 300); }
 
 let win, tray, helper;
-const st = { covered: false, inside: false, rect: { x: (W - 200) / 2, y: 0, w: 200, h: 34 }, pinned: false };
+const st = { covered: false, inside: false, ignoring: true, rect: { x: (W - 200) / 2, y: 0, w: 200, h: 34 }, pinned: false };
 const send = (ch, data) => { if (win && !win.isDestroyed()) win.webContents.send(ch, data); };
 
 function placeWindow() {
@@ -53,13 +53,13 @@ function trackCursor() {
   setInterval(() => {
     if (!win || win.isDestroyed()) return;
     const p = screen.getCursorScreenPoint(), wb = win.getBounds(), r = st.rect;
-    const pad = st.inside ? 4 : 2;
+    const pad = r.edge ? 0 : st.inside ? 4 : 2;
     const inside = p.x >= wb.x + r.x - pad && p.x <= wb.x + r.x + r.w + pad && p.y >= wb.y - 2 && p.y <= wb.y + r.y + r.h + pad;
-    if (inside !== st.inside) {
-      st.inside = inside;
-      win.setIgnoreMouseEvents(!inside, { forward: true });
-      send('hover', inside);
-    }
+    if (inside !== st.inside) { st.inside = inside; send('hover', inside); }
+    // escondida (janela maximizada): a faixa da borda só "escuta" o mouse e deixa os cliques passarem
+    // para o Chrome; a ilha só passa a receber cliques depois de abrir de fato
+    const ignore = !(inside && !r.edge);
+    if (ignore !== st.ignoring) { st.ignoring = ignore; win.setIgnoreMouseEvents(ignore, { forward: true }); }
   }, 30);
   // outras janelas "sempre por cima" podem passar na frente: reafirma de tempos em tempos
   setInterval(() => { if (win && !win.isDestroyed()) { win.setAlwaysOnTop(true, 'screen-saver'); if (!st.inside) win.moveTop(); } }, 2500);
@@ -263,8 +263,8 @@ function setupIpc() {
   ipcMain.on('rect', (_, r) => { st.rect = r; });
   // a janela não rouba o foco ao clicar; só vira "focável" quando a pessoa precisa digitar
   ipcMain.on('focus', (_, on) => {
-    if (on) { win.setFocusable(true); win.setIgnoreMouseEvents(false); win.focus(); }
-    else { win.blur(); win.setFocusable(false); if (!st.inside) win.setIgnoreMouseEvents(true, { forward: true }); }
+    if (on) { win.setFocusable(true); st.ignoring = false; win.setIgnoreMouseEvents(false); win.focus(); }
+    else { win.blur(); win.setFocusable(false); if (!st.inside) { st.ignoring = true; win.setIgnoreMouseEvents(true, { forward: true }); } }
   });
   ipcMain.handle('cfg:get', () => ({ ...cfg, platform: process.platform, version: app.getVersion(), covered: cfg.hideOnMax && st.covered, shDetected: (() => { try { return !!shTarget(); } catch (_) { return false; } })() }));
   ipcMain.handle('cfg:set', (_, patch) => {
