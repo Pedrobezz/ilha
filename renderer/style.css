@@ -673,3 +673,15 @@ body.dragging .drop-hint { opacity: 1; }
 .cl-item em { font-style: normal; color: var(--t3); font-variant-numeric: tabular-nums; }
 .cl-item span { color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cl-item:first-child span { color: var(--t1); }
+
+/* Wi-Fi e Bluetooth: o nome embaixo abre as conexões do Windows */
+.qwrap { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 58px; flex: none; }
+.qlabel { max-width: 62px; font-size: 10.5px; font-weight: 600; color: var(--t2); padding: 1px 4px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .2s, background .2s; }
+.qlabel:hover { color: var(--t1); background: rgba(255, 255, 255, .08); }
+.qrow { align-items: flex-start; }
+.qrow .netline { align-self: center; margin-top: -14px; }
+/* botões ocupam a largura toda; velocidade da rede numa linha embaixo */
+.qrow { flex-wrap: wrap; row-gap: 8px; }
+.qwrap { flex: 1; width: auto; min-width: 0; }
+.qlabel { max-width: 100%; font-size: 11px; }
+.qrow .netline { flex: 0 0 100%; flex-direction: row; justify-content: space-around; margin-top: 0; padding: 6px 10px; }

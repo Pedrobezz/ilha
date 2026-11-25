@@ -609,7 +609,14 @@ function onRadios(m) {
     b.classList.toggle('na', !r.has); b.classList.toggle('on', !!r.on);
     b.title = (id === 'q-wifi' ? 'Wi-Fi' : 'Bluetooth') + (!r.has ? ' (não encontrado)' : r.on ? ' ligado' : ' desligado');
   }
-  $('#q-ssid').textContent = m.wifi.on ? (m.ssid ? `Wi-Fi: ${m.ssid}` : 'Wi-Fi ligado') : m.wifi.has ? 'Wi-Fi desligado' : '';
+  $('#ql-wifi').textContent = (m.wifi.on && m.ssid ? m.ssid : 'Wi-Fi') + ' ›';
+  $('#ql-wifi').title = m.wifi.on && m.ssid ? `Conectado a ${m.ssid} · clique para ver as redes` : 'Ver as redes Wi-Fi';
+}
+// o nome embaixo (ou botão direito no círculo) abre as conexões do Windows: lista de redes ou dispositivos Bluetooth
+for (const kind of ['wifi', 'bt']) {
+  const openList = e => { e.preventDefault(); window.ilha.openSys(kind); close(); };
+  $('#ql-' + kind).addEventListener('click', openList);
+  $('#q-' + kind).addEventListener('contextmenu', openList);
 }
 for (const [id, kind, name] of [['q-wifi', 'wifi', 'Wi-Fi'], ['q-bt', 'bt', 'Bluetooth']]) {
   $('#' + id).addEventListener('click', () => {

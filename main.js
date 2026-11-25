@@ -512,6 +512,8 @@ function setupIpc() {
   ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?|radio (wifi|bt) (on|off)|radios)$/.test(String(c))) helperCmd(c); });
   ipcMain.handle('siteicon', (_, url) => /^https?:\/\//.test(String(url)) ? siteIcon(String(url)) : '');
   ipcMain.handle('claudeState', () => claudeSummary());
+  // painéis do Windows: lista de redes Wi-Fi (o mesmo da barra de tarefas) e dispositivos Bluetooth
+  ipcMain.on('opensys', (_, what) => { const u = { wifi: 'ms-availablenetworks:', bt: 'ms-settings:bluetooth' }[what]; if (u) shell.openExternal(u); });
   ipcMain.handle('fileinfo', (_, paths) => Promise.all((paths || []).slice(0, 50).map(p => fileInfo(String(p)))));
   ipcMain.on('openpath', (_, p) => { p = String(p); if (/^https?:\/\//.test(p)) shell.openExternal(p); else shell.openPath(p); });
   ipcMain.on('reveal', (_, p) => shell.showItemInFolder(String(p)));
