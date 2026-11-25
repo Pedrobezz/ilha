@@ -1143,6 +1143,8 @@ const DEV_IC = {
   other: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="3" fill="currentColor" stroke="none"/></svg>',
 };
 const BOLT = '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor" stroke="none"/></svg>';
+// nomes de teclados conhecidos (o Anne Pro 2 aparece no Bluetooth como "AP2")
+const isKeyboard = n => /\b(ap2|anne|keyboard|teclado|keychron|mx keys|k\d{3,4}|g\d{3} ?keyboard|nuphy|royal ?kludge|rk\d+)\b/i.test(String(n));
 function renderDevRings() {
   const list = S.btBat || [];
   const headset = list.find(d => d.kind === 'headset'), mouse = list.find(d => d.kind === 'mouse');
@@ -1152,7 +1154,11 @@ function renderDevRings() {
   ];
   // 3º anel: a bateria do notebook ou outro aparelho com bateria (ex.: teclado Bluetooth)
   if (S.battery) slots.push({ label: 'Este PC', icon: 'laptop', d: { name: 'Este PC', battery: Math.round(S.battery.level * 100), charging: S.battery.charging } });
-  else { const o = list.find(d => d !== headset && d !== mouse); if (o) slots.push({ label: o.name.split(' ')[0], icon: /keyboard|teclado|anne|keychron/i.test(o.name) ? 'keyboard' : 'other', d: o }); }
+  else {
+    const others = list.filter(d => d.kind !== 'mouse' && d.kind !== 'headset' && d.name !== headset?.name && d.name !== mouse?.name);
+    const o = others.find(d => d.kind === 'bt') || others[0];
+    if (o) { const kb = isKeyboard(o.name); slots.push({ label: kb ? 'Teclado' : o.name.split(' ')[0], icon: kb ? 'keyboard' : 'other', d: o }); }
+  }
   $('#dev-rings').innerHTML = slots.map(s => {
     const d = s.d, p = d ? clamp(d.battery, 0, 100) : 0;
     const color = !d ? 'rgba(255,255,255,.18)' : d.charging ? '#30d158' : p <= 20 ? '#ff453a' : '#30d158';
@@ -1165,19 +1171,30 @@ function renderDevRings() {
 }
 
 // periféricos: Bluetooth + fone/mouse com receptor próprio (HyperX, Logitech)
-const lowWarned = new Set();
+// nome amigável e ícone de cada aparelho para os avisos
+const devLabel = d => d.kind === 'headset' ? 'Fone' : d.kind === 'mouse' ? 'Mouse' : isKeyboard(d.name) ? 'Teclado' : d.name;
+const devIcon = d => d.kind === 'headset' ? DEV_IC.headset : d.kind === 'mouse' ? DEV_IC.mouse : isKeyboard(d.name) ? DEV_IC.keyboard : DEV_IC.other;
+const warned = {}; // por aparelho: { 20: true, 10: true } — cada nível avisa uma vez até carregar de novo
 function onPeripherals(list) {
-  const prev = new Set((S.btBat || []).map(d => d.name));
+  const prevList = S.btBat || [], prev = new Map(prevList.map(d => [d.name, d]));
   const first = S.btBat === undefined;
   S.btBat = list;
   const bt = list.filter(d => d.kind === 'bt');
-  if (bt[0]) { $('#ql-bt').textContent = `${bt[0].name.split(' ')[0]} ${bt[0].battery}% ›`; $('#ql-bt').title = bt.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
+  if (bt[0]) { $('#ql-bt').textContent = `${isKeyboard(bt[0].name) ? 'Teclado' : bt[0].name.split(' ')[0]} ${bt[0].battery}% ›`; $('#ql-bt').title = bt.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
   else { $('#ql-bt').textContent = 'Bluetooth ›'; $('#ql-bt').title = 'Ver os dispositivos Bluetooth'; }
   renderDevRings();
   for (const d of list) {
-    if (!first && !prev.has(d.name)) notice('head', '#0a84ff', d.name, `Bateria ${d.battery}%`, 4000);
-    if (d.battery <= 15 && !d.charging && !lowWarned.has(d.name)) { lowWarned.add(d.name); notice('head', '#ff453a', 'Bateria fraca', `${d.name}: ${d.battery}%`, 6000); }
-    if (d.battery > 20) lowWarned.delete(d.name);
+    const p = prev.get(d.name), w = (warned[d.name] = warned[d.name] || {});
+    if (!first && !p) notice('head', '#0a84ff', devLabel(d), `${d.name} conectado · ${d.battery}%`, 4000);
+    // começou ou parou de carregar
+    if (p && p.charging !== d.charging) {
+      if (d.charging) notice('bolt', '#30d158', `${devLabel(d)} carregando`, `${d.battery}%`, 3500);
+      else notice('head', '#ffffff', `${devLabel(d)} fora do carregador`, `${d.battery}%`, 3500);
+    }
+    // avisos de bateria em 20% e 10% (10% com som)
+    if (d.charging || d.battery > 25) { w[20] = false; w[10] = false; }
+    else if (d.battery <= 10 && !w[10]) { w[10] = w[20] = true; chime(); showAlert(`${devLabel(d)} com ${d.battery}% de bateria`, `${d.name} · conecte o carregador`, `<span style="color:#ff453a">${devIcon(d)}</span>`, { ms: 15000 }); }
+    else if (d.battery <= 20 && !w[20]) { w[20] = true; notice('head', '#ff9f0a', `${devLabel(d)} com ${d.battery}%`, 'Bateria acabando', 6000); }
   }
 }
 window.ilha.onBtBat(onPeripherals);

@@ -2,7 +2,16 @@
 
 Uma "ilha dinâmica" para o Windows: fica no topo da tela, no centro, como o notch do MacBook. Passe o mouse em cima e ela se abre num painel de vidro com animação de mola.
 
-## Instalar
+## Instalar em qualquer PC (mais fácil)
+
+1. No GitHub, abra este repositório e clique em **Releases** (lado direito da página), ou acesse `github.com/Pedrobezz/ilha/releases/latest`.
+2. Baixe o arquivo **Ilha-Setup-<versão>.exe** (não precisa baixar o ZIP do código).
+3. Dê dois cliques. Se o Windows mostrar "O Windows protegeu o computador", clique em **Mais informações → Executar assim mesmo** (o app não tem assinatura digital paga).
+4. Pronto: instala em um clique, cria atalhos e abre a Ilha. Não precisa de Node, npm nem nada instalado.
+
+Para os avisos do Claude Code nesse outro PC, copie também o arquivo `~/.claude/settings.json` (hooks e linha de status) deste README.
+
+## Gerar o instalador (desenvolvimento)
 
 - Rode `npm run dist` e abra **`dist/Ilha-Setup-<versão>.exe`**: instala em um clique, cria atalho no menu Iniciar e na área de trabalho, e abre a Ilha. Para desinstalar: Configurações do Windows → Aplicativos → Ilha.
 - `npm run icon` gera de novo o ícone (`build/icon.ico`).

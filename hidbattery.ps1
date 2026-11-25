@@ -2,6 +2,7 @@
 #  - Logitech LIGHTSPEED (ex.: G Pro X Superlight 2): protocolo HID++ 2.0, recursos 0x1004 / 0x1000 / 0x1001
 #  - HyperX Cloud III Wireless (03F0:05B7): pergunta de status no canal do fabricante
 # Só LÊ o estado da bateria; não muda nenhuma configuração dos aparelhos.
+param([switch]$Loop, [int]$ParentPid = 0)
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -145,25 +146,47 @@ function Get-HppName($h, [int]$dev) {
 }
 function Get-Logitech {
   $out = @()
-  foreach ($long in ([Hid]::List(0x046D) | Where-Object { $_.UsagePage -eq 0xFF00 -and $_.OutLen -eq 20 })) {
-    $h = [Hid]::Open($long.Path); if (-not $h) { continue }
+  # lista de aparelhos HID é cara: refaz a cada 30 s (ou quando algo some)
+  if (-not $script:lgPaths -or ([DateTime]::UtcNow - $script:lgListAt).TotalSeconds -gt 30) {
+    $script:lgPaths = @([Hid]::List(0x046D) | Where-Object { $_.UsagePage -eq 0xFF00 -and $_.OutLen -eq 20 } | ForEach-Object { $_.Path })
+    $script:lgListAt = [DateTime]::UtcNow
+  }
+  foreach ($path in $script:lgPaths) {
+    $h = [Hid]::Open($path); if (-not $h) { $script:lgPaths = $null; continue }
     try {
-      foreach ($dev in 1..6) {
-        $feat = 0; $idx = 0
-        foreach ($f in @(0x1004, 0x1000, 0x1001)) { $idx = Get-FeatureIndex $h $dev $f; if ($idx -ne 0) { $feat = $f; break } }
-        if ($idx -le 0) { continue }
-        $r = Send-Hpp $h $dev $idx ($(if ($feat -eq 0x1004) { 1 } else { 0 })) ([byte[]]@())
-        if (-not $r -or $r[2] -ne $idx) { continue }
-        if ($feat -eq 0x1004) { $pct = [int]$r[4]; $charging = ($r[6] -eq 1 -or $r[6] -eq 2) }
-        elseif ($feat -eq 0x1000) { $pct = [int]$r[4]; $charging = ($r[6] -ge 1 -and $r[6] -le 3) }
+      # guarda onde o mouse foi encontrado; procura em todos os lugares só de vez em quando
+      $key = $path
+      $cache = $script:lgCache[$key]
+      $full = (-not $cache) -or ([DateTime]::UtcNow - $cache.at).TotalSeconds -gt 60
+      $devs = if ($full) { 1..6 } else { $cache.devs }
+      $found = @()
+      foreach ($dev in $devs) {
+        $info = if (-not $full -and $cache.info[$dev]) { $cache.info[$dev] } else { $null }
+        if (-not $info) {
+          $feat = 0; $idx = 0
+          foreach ($f in @(0x1004, 0x1000, 0x1001)) { $idx = Get-FeatureIndex $h $dev $f; if ($idx -ne 0) { $feat = $f; break } }
+          if ($idx -le 0) { continue }
+          $name = Get-HppName $h $dev; if (-not $name) { $name = 'Mouse Logitech' }
+          $info = @{ feat = $feat; idx = $idx; name = $name }
+        }
+        $r = Send-Hpp $h $dev $info.idx ($(if ($info.feat -eq 0x1004) { 1 } else { 0 })) ([byte[]]@())
+        if (-not $r -or $r[2] -ne $info.idx) { continue }
+        if ($info.feat -eq 0x1004) { $pct = [int]$r[4]; $charging = ($r[6] -eq 1 -or $r[6] -eq 2) }
+        elseif ($info.feat -eq 0x1000) { $pct = [int]$r[4]; $charging = ($r[6] -ge 1 -and $r[6] -le 3) }
         else { $mv = ($r[4] * 256 + $r[5]); $pct = [int][math]::Max(0, [math]::Min(100, ($mv - 3500) / 7)); $charging = (($r[6] -band 0x80) -ne 0) }
-        $name = Get-HppName $h $dev; if (-not $name) { $name = 'Mouse Logitech' }
-        $out += @{ name = $name; battery = $pct; charging = $charging; kind = 'mouse' }
+        $found += @{ dev = $dev; info = $info }
+        $out += @{ name = $info.name; battery = $pct; charging = $charging; kind = 'mouse' }
+      }
+      if ($full -or $found.Count -eq 0) {
+        $inf = @{}; foreach ($f in $found) { $inf[$f.dev] = $f.info }
+        $script:lgCache[$key] = @{ at = [DateTime]::UtcNow; devs = @($found | ForEach-Object { $_.dev }); info = $inf }
+        if ($found.Count -eq 0) { $script:lgCache.Remove($key) }
       }
     } finally { $h.Dispose() }
   }
   return $out
 }
+$script:lgCache = @{}
 
 # ---------------- HyperX Cloud III Wireless (03F0:05B7) ----------------
 # Resposta ao comando 66 89: o 5º byte é a bateria em % (conferido com o app NGENUITY).
@@ -186,7 +209,23 @@ function Get-HyperX {
   } finally { $h.Dispose() }
 }
 
-$out = @()
-foreach ($d in @(Get-Logitech)) { if ($d) { $out += $d } }
-$hx = Get-HyperX; if ($hx) { $out += $hx }
-[Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject @($out)))
+function Get-All {
+  $out = @(); $names = @{}
+  # o receptor pode responder pelo mesmo mouse em vários "lugares" (ex.: quando está no cabo): fica um por nome
+  foreach ($d in @(Get-Logitech)) { if ($d -and -not $names.ContainsKey($d.name)) { $names[$d.name] = 1; $out += $d } }
+  $hx = Get-HyperX; if ($hx) { $out += $hx }
+  return (ConvertTo-Json -Compress -InputObject @($out))
+}
+
+if ($Loop) {
+  # modo contínuo: confere a cada 2 s e só escreve quando algo muda (carregar/tirar do cabo aparece na hora)
+  $last = ''
+  while ($true) {
+    if ($ParentPid -and -not (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue)) { exit }
+    $j = Get-All
+    if ($j -ne $last) { $last = $j; [Console]::Out.WriteLine($j); [Console]::Out.Flush() }
+    Start-Sleep -Milliseconds 2000
+  }
+} else {
+  [Console]::Out.WriteLine((Get-All))
+}

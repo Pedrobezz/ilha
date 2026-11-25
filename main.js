@@ -369,12 +369,32 @@ function runBatteryScript(file, kind) {
     resolve(list.filter(d => d && typeof d.battery === 'number').map(d => ({ kind, ...d })));
   }));
 }
-// Bluetooth (pelo Windows) + receptores próprios (Logitech LIGHTSPEED, HyperX), a cada 45 s
-async function btBatteryLoop() {
-  const [bt, hid] = await Promise.all([runBatteryScript('btbattery.ps1', 'bt'), runBatteryScript('hidbattery.ps1', 'hid')]);
-  const list = [...hid, ...bt];
+// receptores próprios (Logitech LIGHTSPEED, HyperX): processo contínuo que confere a cada 2 s e avisa na hora
+// quando algo muda (ex.: começou ou parou de carregar). Bluetooth (pelo Windows): a cada 25 s.
+let hidList = [], btList = [], hidProc = null;
+function pushBatteries() {
+  const list = [...hidList, ...btList];
   const sig = JSON.stringify(list);
   if (sig !== btLast) { btLast = sig; send('btbat', list); }
+}
+function startHidBattery() {
+  const script = path.join(__dirname, 'hidbattery.ps1').replace('app.asar', 'app.asar.unpacked');
+  hidProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Loop', '-ParentPid', String(process.pid)], { windowsHide: true });
+  let buf = '';
+  hidProc.stdout.setEncoding('utf8');
+  hidProc.stdout.on('data', d => {
+    buf += d; let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      try { const l = JSON.parse(line || '[]'); hidList = (Array.isArray(l) ? l : [l]).filter(x => x && typeof x.battery === 'number').map(x => ({ kind: 'hid', ...x })); pushBatteries(); } catch (_) {}
+    }
+  });
+  hidProc.on('exit', () => { hidProc = null; if (!app.isQuitting) setTimeout(startHidBattery, 5000); });
+}
+async function btBatteryLoop() {
+  if (!hidProc) startHidBattery();
+  btList = await runBatteryScript('btbattery.ps1', 'bt');
+  pushBatteries();
   setTimeout(btBatteryLoop, 25000);
 }
 ipcMain.handle('peripherals', () => { try { return JSON.parse(btLast || '[]'); } catch (_) { return []; } });
@@ -827,6 +847,6 @@ app.whenReady().then(() => {
   screen.on('display-removed', placeWindow);
 });
 app.on('second-instance', () => send('toggle'));
-app.on('before-quit', () => { app.isQuitting = true; helperCmd('quit'); try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} });
+app.on('before-quit', () => { app.isQuitting = true; helperCmd('quit'); try { hidProc?.kill(); } catch (_) {} try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} });
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('window-all-closed', () => app.quit());
