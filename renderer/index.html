@@ -37,6 +37,7 @@
         <button data-tab="sys"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg><span>Sistema</span></button>
         <button data-tab="casa"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg><span>Casa</span></button>
         <button data-tab="tools"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg><span>Foco</span></button>
+        <button data-tab="claude"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg><span>Claude</span></button>
         <button data-tab="files"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 13.5v7M13.5 17h7"/></svg><span>Atalhos</span></button>
         <button data-tab="set"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Ajustes</span></button>
       </nav>
@@ -83,10 +84,15 @@
               <div class="ring" id="ring-mem" style="--c:#bf5af2"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>0%</b><span>RAM</span></div>
               <div class="ring" id="ring-bat" style="--c:#30d158"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>–</b><span>Bateria</span></div>
             </div>
+            <div class="qrow">
+              <button class="qt" id="q-wifi" title="Wi-Fi"><svg viewBox="0 0 24 24"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16.3a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r=".9" fill="currentColor"/></svg></button>
+              <button class="qt" id="q-bt" title="Bluetooth"><svg viewBox="0 0 24 24"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg></button>
             <div class="netline">
               <div><svg viewBox="0 0 24 24"><path d="M12 4v16M6 14l6 6 6-6"/></svg><b id="h-down">0</b><span id="h-down-u">KB/s</span></div>
               <div><svg viewBox="0 0 24 24"><path d="M12 20V4M6 10l6-6 6 6"/></svg><b id="h-up">0</b><span id="h-up-u">KB/s</span></div>
             </div>
+            </div>
+            <div class="q-ssid" id="q-ssid"></div>
             <button class="quick" data-go="net"><svg viewBox="0 0 24 24"><path d="M12 13.5 16.5 9"/><path d="M3.5 17a9 9 0 1 1 17 0"/></svg>Testar internet</button>
           </div>
         </div>
@@ -186,6 +192,35 @@
         </div>
       </section>
 
+      <!-- CLAUDE: o que está fazendo, tempo, tokens e limites -->
+      <section class="page" data-page="claude">
+        <div class="cl-grid">
+          <div class="card cl-now r1" id="cl-now">
+            <div class="cl-head"><span class="cl-logo"><svg viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7" stroke-width="2.6"/></svg></span><div><b id="cl-state">Claude</b><span id="cl-project">Sem atividade ainda</span></div><em class="cl-badge" id="cl-badge">parado</em></div>
+            <div class="cl-activity" id="cl-activity">Quando você pedir algo ao Claude Code, aparece aqui o que ele está fazendo.</div>
+            <div class="cl-stats">
+              <div><span>Tempo na tarefa</span><b id="cl-time">–</b></div>
+              <div><span>Tokens na tarefa</span><b id="cl-ttask">–</b></div>
+              <div><span>Tokens na sessão</span><b id="cl-tsess">–</b></div>
+            </div>
+          </div>
+          <div class="card cl-limits r2">
+            <div class="card-h"><span>Uso do plano</span><em id="cl-model"></em></div>
+            <div class="cl-rings">
+              <div class="cl-ring" id="cl-five" style="--c:#d97757"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>–</b><span>Sessão (5 h)</span><small></small></div>
+              <div class="cl-ring" id="cl-seven" style="--c:#bf5af2"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>–</b><span>Semanal</span><small></small></div>
+              <div class="cl-ring" id="cl-ctx" style="--c:#64d2ff"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18"/><circle class="v" cx="22" cy="22" r="18"/></svg><b>–</b><span>Contexto</span><small></small></div>
+            </div>
+            <p class="cl-hint" id="cl-hint">Os limites chegam a cada resposta do Claude Code.</p>
+          </div>
+          <div class="card cl-log r3">
+            <div class="card-h"><span>Atividade</span></div>
+            <div class="cl-list" id="cl-log"></div>
+          </div>
+        </div>
+      </section>
+
+
       <!-- ATALHOS: prateleira de arquivos e favoritos -->
       <section class="page" data-page="files">
         <div class="files-grid">
@@ -212,10 +247,11 @@
               <div class="row"><span class="ri" style="--c:#64d2ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></span><span class="rt">Transparência</span><div class="slide-wrap"><input type="range" class="slider" id="set-glass" min="0" max="70" step="1"><b id="set-glass-v">22%</b></div></div>
               <div class="row col"><div class="row-top"><span class="ri" style="--c:linear-gradient(135deg,#e8794a,#4a6ae8)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1" fill="currentColor"/></svg></span><span class="rt">Tema</span><em class="theme-name" id="theme-name"></em></div><div class="swatches" id="set-theme"></div></div>
             </div>
-            <h4 class="gh r2">Contas e dados</h4>
+            <h4 class="gh r2">Ilha fechada</h4>
             <div class="group r2">
-              <label class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></span><span class="rt">Cidade do clima</span><input id="set-city" placeholder="Automática" spellcheck="false"></label>
-              <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span><span class="rt">SmartHouse</span><input id="set-sh" placeholder="Detectar neste PC" spellcheck="false"></label>
+              <div class="row"><span class="ri" style="--c:#1c1c1e;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="5" rx="2.5" fill="currentColor"/><rect x="3" y="11" width="18" height="10" rx="3"/></svg></span><span class="rt">Estilo</span><div class="seg" id="set-style"><button data-v="notch">Notch</button><button data-v="float">Flutuante</button></div></div>
+              <div class="row"><span class="ri" style="--c:linear-gradient(135deg,#3a3a3c,#000)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg></span><span class="rt">Cor</span><div class="seg" id="set-icolor"><button data-v="black">Preta</button><button data-v="theme">Do tema</button></div></div>
+              <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span><span class="rt">Opacidade</span><div class="slide-wrap"><input type="range" class="slider" id="set-ialpha" min="30" max="100" step="1"><b id="set-ialpha-v">100%</b></div></div>
             </div>
           </div>
           <div class="set-col">
@@ -225,9 +261,13 @@
               <div class="row"><span class="ri" style="--c:#30b0c7"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="rt">Monitor</span><div class="seg" id="set-monitor"><button data-v="primary">Principal</button><button data-v="cursor">Do mouse</button></div></div>
               <label class="row"><span class="ri" style="--c:#ff375f"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span><span class="rt">Avisos ao vivo</span><input type="checkbox" class="switch" id="set-alerts"></label>
               <label class="row"><span class="ri" style="--c:#30d158"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Iniciar com o Windows</span><input type="checkbox" class="switch" id="set-start"></label>
-              <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span><span class="rt">Abrir pelo teclado</span><span class="kbd"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espaço</kbd></span></div>
             </div>
-            <div class="set-foot r3"><span>Ilha <span id="ver"></span></span><button id="set-quit" class="pill-btn danger">Sair da Ilha</button></div>
+            <h4 class="gh r2">Contas e dados</h4>
+            <div class="group r2">
+              <label class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></span><span class="rt">Cidade do clima</span><input id="set-city" placeholder="Automática" spellcheck="false"></label>
+              <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span><span class="rt">SmartHouse</span><input id="set-sh" placeholder="Detectar neste PC" spellcheck="false"></label>
+            </div>
+            <div class="set-foot r3"><span>Ilha <span id="ver"></span> · <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>Espaço</kbd> abre</span><button id="set-quit" class="pill-btn danger">Sair da Ilha</button></div>
           </div>
         </div>
       </section>

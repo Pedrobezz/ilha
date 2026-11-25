@@ -2,7 +2,8 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const isl = $('#island');
 const WIN_W = 900;
-const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], set: [860, 420] };
+const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 500] };
+const FLOAT_GAP = 8; // distância do topo no estilo flutuante
 const COLLAPSED = [196, 32];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
@@ -23,6 +24,7 @@ function activity() {
   if (S.notice && S.notice.until > Date.now()) return 'notice';
   if (S.volFlash && S.volFlash.until > Date.now()) return 'vol';
   if (t.running || (t.left < t.total && t.left > 0)) return 'timer';
+  if (S.claude?.working) return 'claude';
   if (S.speed.running) return 'speed';
   if (S.media?.has && S.media.playing) return 'media';
   return null;
@@ -32,18 +34,20 @@ function render() {
   let mode, size;
   if (S.alert) { mode = 'alerting'; size = [400, 84]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
   const transient = mode === 'compact' && ['notice', 'vol'].includes(activity());
   const hidden = S.covered && (mode === 'collapsed' || mode === 'compact') && !transient;
-  isl.className = mode + (hidden ? ' hidden-top' : '');
+  const float = S.cfg.islandStyle === 'float';
+  isl.className = mode + (hidden ? ' hidden-top' : '') + (float ? ' float' : '') + (S.cfg.islandColor === 'theme' ? ' themed' : '');
   isl.style.setProperty('--w', size[0] + 'px');
   isl.style.setProperty('--h', size[1] + 'px');
   S.size = size;
   // escondida: só a borda de cima da tela (1 px) abre a ilha, para não atrapalhar as abas do Chrome
   if (hidden) window.ilha.setRect({ x: (WIN_W - COLLAPSED[0]) / 2, y: 0, w: COLLAPSED[0], h: 1, edge: true });
-  else window.ilha.setRect({ x: (WIN_W - size[0]) / 2, y: 0, w: size[0], h: size[1] });
+  // flutuante: a área do mouse inclui o espacinho entre a ilha e o topo
+  else window.ilha.setRect({ x: (WIN_W - size[0]) / 2, y: 0, w: size[0], h: size[1] + (float ? FLOAT_GAP : 0) });
   if (mode === 'compact') renderCompact();
 }
 
@@ -86,6 +90,8 @@ function setTab(tab, instant) {
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   $$('.page').forEach(p => p.classList.toggle('on', p.dataset.page === tab));
   movePill(instant);
+  // os nomes das abas abrem/fecham animados: a pílula acompanha durante a animação
+  if (!instant) { const t0 = performance.now(); (function follow() { movePill(true); if (performance.now() - t0 < 520) requestAnimationFrame(follow); })(); }
   if (S.open) { render(); onTabShown(); }
 }
 function movePill(instant) {
@@ -100,6 +106,7 @@ $$('[data-go]').forEach(b => b.addEventListener('click', () => { setTab(b.datase
 function onTabShown() {
   if (S.tab === 'casa') loadCasa();
   if (S.tab === 'sys') window.ilha.disk();
+  if (S.tab === 'claude') renderClaude();
 }
 
 /* =================== aviso e alerta =================== */
@@ -353,6 +360,13 @@ function renderCompact() {
     R.innerHTML = `<div class="vbar"><i style="width:${v.muted ? 0 : p}%"></i></div><b style="width:30px;text-align:right">${v.muted ? '0' : p}</b>`; R.dataset.k = '';
     return;
   }
+  if (a === 'claude') {
+    const c = S.claude;
+    if (L.dataset.k !== 'claude') { L.innerHTML = `<span class="c-ico" style="background:rgba(217,119,87,.25);color:#d97757">${NOTE_IC.claude}</span><span class="c-note" style="color:var(--t1);max-width:250px"></span>`; L.dataset.k = 'claude'; }
+    L.lastChild.textContent = c.activity || 'Trabalhando';
+    R.innerHTML = `<b style="color:#d97757">${fmtT((Date.now() - c.startedAt) / 1000)}</b>`; R.dataset.k = '';
+    return;
+  }
   if (a === 'timer') {
     if (L.dataset.k !== 'timer') { L.innerHTML = `<span class="c-ico" style="background:rgba(255,159,10,.22);color:#ff9f0a">${IC.timer}</span><span style="color:#ff9f0a">${S.timer.running ? 'Foco' : 'Pausado'}</span>`; L.dataset.k = 'timer'; }
     L.lastChild.textContent = S.timer.running ? 'Foco' : 'Pausado';
@@ -407,6 +421,7 @@ window.ilha.onSys(s => {
 window.ilha.onNative(m => {
   if (m.t === 'media') setMedia(m);
   else if (m.t === 'vol') onVol(m);
+  else if (m.t === 'radios') onRadios(m);
   else if (m.t === 'net') {
     push(hist.down, m.down); push(hist.up, m.up);
     const [d, du] = fmtRate(m.down), [u, uu] = fmtRate(m.up);
@@ -585,6 +600,74 @@ window.ilha.onClaude(c => {
     showAlert('Claude precisa de você', `${claudeMsg(c.message)}${where}`, `<span style="color:${CLAUDE_C}">${NOTE_IC.claude}</span>`);
   } else notice('claude', CLAUDE_C, 'Claude', `${claudeMsg(c.message)}${where}`, 6000);
 });
+// Wi-Fi e Bluetooth (botões redondos estilo Central de Controle)
+function onRadios(m) {
+  S.radios = m;
+  for (const [id, r] of [['q-wifi', m.wifi], ['q-bt', m.bt]]) {
+    const b = $('#' + id);
+    b.classList.remove('busy');
+    b.classList.toggle('na', !r.has); b.classList.toggle('on', !!r.on);
+    b.title = (id === 'q-wifi' ? 'Wi-Fi' : 'Bluetooth') + (!r.has ? ' (não encontrado)' : r.on ? ' ligado' : ' desligado');
+  }
+  $('#q-ssid').textContent = m.wifi.on ? (m.ssid ? `Wi-Fi: ${m.ssid}` : 'Wi-Fi ligado') : m.wifi.has ? 'Wi-Fi desligado' : '';
+}
+for (const [id, kind, name] of [['q-wifi', 'wifi', 'Wi-Fi'], ['q-bt', 'bt', 'Bluetooth']]) {
+  $('#' + id).addEventListener('click', () => {
+    const r = S.radios?.[kind]; if (!r?.has) return;
+    $('#' + id).classList.add('busy');
+    window.ilha.media(`radio ${kind} ${r.on ? 'off' : 'on'}`);
+    toast(`${name} ${r.on ? 'desligado' : 'ligado'}`);
+  });
+}
+
+// Claude ao vivo: estado, tempo, tokens, limites do plano e atividade
+const fmtTok = n => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' mi' : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace('.', ',') + ' mil' : String(Math.round(n || 0));
+const fmtDurS = ms => { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return `${s} s`; const m = Math.floor(s / 60); return m < 60 ? `${m} min ${String(s % 60).padStart(2, '0')} s` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+function resetIn(ts) {
+  if (!ts) return '';
+  const ms = ts * 1000 - Date.now(); if (ms <= 0) return 'renova agora';
+  const h = Math.floor(ms / 3600e3), m = Math.round(ms % 3600e3 / 60e3);
+  return h >= 24 ? `renova em ${Math.floor(h / 24)}d ${h % 24}h` : h ? `renova em ${h}h ${m}min` : `renova em ${m} min`;
+}
+function clRing(id, p, sub) {
+  const r = $('#' + id);
+  r.querySelector('.v').style.strokeDashoffset = 113.1 * (1 - clamp(p ?? 0, 0, 100) / 100);
+  r.querySelector('b').textContent = p == null ? '–' : Math.round(p) + '%';
+  r.querySelector('small').textContent = sub || '';
+}
+function renderClaude() {
+  const c = S.claude; if (!c) return;
+  const card = $('#cl-now');
+  card.classList.toggle('working', !!c.working);
+  $('#cl-state').textContent = c.working ? 'Claude está trabalhando' : c.endedAt ? 'Claude terminou' : 'Claude';
+  $('#cl-project').textContent = c.project ? `Projeto ${c.project}${c.active > 1 ? ` · ${c.active} sessões ativas` : ''}` : 'Sem atividade ainda';
+  $('#cl-badge').textContent = c.working ? 'ao vivo' : 'parado';
+  $('#cl-activity').textContent = c.working ? (c.activity || 'Trabalhando…') : c.endedAt ? `Última tarefa terminou ${ago(c.endedAt)}.` : 'Quando você pedir algo ao Claude Code, aparece aqui o que ele está fazendo.';
+  $('#cl-time').textContent = c.startedAt ? fmtDurS((c.working ? Date.now() : c.endedAt) - c.startedAt) : '–';
+  $('#cl-ttask').textContent = c.startedAt ? fmtTok(c.tokensTask) : '–';
+  $('#cl-tsess').textContent = c.tokensSession ? fmtTok(c.tokensSession) : '–';
+  $('#cl-tsess').title = c.cacheSession ? `${fmtTok(c.cacheSession)} lidos do cache (não contam aqui)` : '';
+  const L = c.limits;
+  clRing('cl-five', L?.five?.p, resetIn(L?.five?.reset));
+  clRing('cl-seven', L?.seven?.p, resetIn(L?.seven?.reset));
+  clRing('cl-ctx', c.ctx?.p, c.ctx?.size ? `de ${fmtTok(c.ctx.size)}` : '');
+  $('#cl-model').textContent = c.model || '';
+  $('#cl-hint').textContent = L ? `Atualizado ${ago(L.at)}` : 'Os limites chegam a cada resposta do Claude Code.';
+  $('#cl-log').innerHTML = (c.log || []).length ? c.log.map(l => `<div class="cl-item"><em>${new Date(l.t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</em><span title="${esc(l.project)}">${esc(l.text)}</span></div>`).join('')
+    : '<div class="out-empty">Nada ainda.</div>';
+}
+window.ilha.onClaudeState(c => {
+  const was = S.claude?.working;
+  S.claude = c;
+  if (S.open && S.tab === 'claude') renderClaude();
+  if (!S.open && (was !== c.working || c.working)) render();
+});
+setInterval(() => {
+  if (!S.claude?.working) return;
+  if (S.open && S.tab === 'claude') renderClaude();
+  else if (!S.open && activity() === 'claude') renderCompact();
+}, 1000);
+
 function softChime() {
   try {
     const ac = new AudioContext(), o = ac.createOscillator(), g = ac.createGain();
@@ -786,7 +869,25 @@ function fillSettings() {
   applyTheme(S.cfg.theme || 'grafite');
   $('#set-alerts').checked = S.cfg.liveAlerts !== false;
   $$('#set-monitor button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.monitor || 'primary')));
+  $$('#set-style button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.islandStyle || 'notch')));
+  $$('#set-icolor button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.islandColor || 'black')));
+  $('#set-ialpha').value = S.cfg.islandAlpha ?? 100; applyIAlpha(S.cfg.islandAlpha ?? 100);
 }
+// estilo da ilha fechada: notch ou flutuante, preta ou do tema, e a opacidade
+function applyIAlpha(v) {
+  v = clamp(Number(v) || 100, 30, 100);
+  isl.style.setProperty('--calpha', (v / 100).toFixed(2));
+  $('#set-ialpha').style.setProperty('--p', ((v - 30) / 70 * 100) + '%');
+  $('#set-ialpha-v').textContent = Math.round(v) + '%';
+}
+for (const [id, key, msg] of [['set-style', 'islandStyle', { notch: 'Ilha colada no topo (notch)', float: 'Ilha flutuante' }], ['set-icolor', 'islandColor', { black: 'Ilha fechada preta', theme: 'Ilha fechada com o tema' }]]) {
+  $('#' + id).addEventListener('click', async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.cfg = await window.ilha.setCfg({ [key]: b.dataset.v }); fillSettings(); render(); toast(msg[b.dataset.v]);
+  });
+}
+$('#set-ialpha').addEventListener('input', e => applyIAlpha(e.target.value));
+$('#set-ialpha').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ islandAlpha: Number(e.target.value) }); });
 $('#set-alerts').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ liveAlerts: e.target.checked }); });
 $('#set-monitor').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -852,10 +953,18 @@ async function renderFiles(kind) {
   const list = S.cfg[kind] || [], el = $('#' + kind);
   if (!list.length) { el.innerHTML = FILE_EMPTY[kind]; return; }
   const items = await infos(list);
-  el.innerHTML = items.map((f, i) => `<div class="fitem ${f.exists ? '' : 'missing'}" data-i="${i}" data-kind="${kind}" ${f.url ? '' : 'draggable="true"'} title="${esc(f.path)}">
-      ${f.url ? `<span class="letter">${esc(f.name[0]?.toUpperCase() || '?')}</span>` : f.icon ? `<img src="${f.icon}" alt="">` : `<span class="letter">${esc(f.name[0] || '?')}</span>`}
-      <span>${esc(f.name)}</span><button class="x" data-x title="Remover">✕</button></div>`).join('');
+  el.innerHTML = items.map((f, i) => {
+    const site = f.url && siteIcons.get(f.path);
+    const ico = site ? `<img class="site" src="${site}" alt="">` : f.url ? `<span class="letter">${esc(f.name[0]?.toUpperCase() || '?')}</span>` : f.icon ? `<img src="${f.icon}" alt="">` : `<span class="letter">${esc(f.name[0] || '?')}</span>`;
+    return `<div class="fitem ${f.exists ? '' : 'missing'}" data-i="${i}" data-kind="${kind}" ${f.url ? '' : 'draggable="true"'} title="${esc(f.path)}">${ico}<span>${esc(f.name)}</span><button class="x" data-x title="Remover">✕</button></div>`;
+  }).join('');
+  // ícones dos sites: busca em segundo plano (fica guardado) e redesenha quando chegar
+  for (const f of items) if (f.url && !siteIcons.has(f.path)) {
+    siteIcons.set(f.path, '');
+    window.ilha.siteIcon(f.path).then(d => { if (d) { siteIcons.set(f.path, d); renderFiles(kind); } }).catch(() => {});
+  }
 }
+const siteIcons = new Map();
 async function addFiles(kind, paths) {
   paths = paths.filter(Boolean);
   if (!paths.length) return;
@@ -934,6 +1043,8 @@ document.addEventListener('drop', e => {
   fillSettings();
   renderClips(S.cfg.clips);
   S.conn = await window.ilha.conn();
+  S.claude = await window.ilha.claudeState();
+  window.ilha.media('radios');
   renderHistory(S.cfg.speedHistory);
   renderFiles('shelf'); renderFiles('favs');
   setGauge(0, 0);

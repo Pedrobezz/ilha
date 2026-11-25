@@ -23,7 +23,9 @@ contextBridge.exposeInMainWorld('ilha', {
   reveal: p => ipcRenderer.send('reveal', p),
   dragOut: p => ipcRenderer.send('dragout', p),
   conn: () => ipcRenderer.invoke('conn'),
-  onConn: on('conn'), onShLog: on('shlog'), onClaude: on('claude'),
+  siteIcon: url => ipcRenderer.invoke('siteicon', url),
+  claudeState: () => ipcRenderer.invoke('claudeState'),
+  onConn: on('conn'), onShLog: on('shlog'), onClaude: on('claude'), onClaudeState: on('claudeState'),
   onHover: on('hover'), onCovered: on('covered'), onNative: on('native'), onSys: on('sys'),
   onSpeed: on('speedtest'), onClips: on('clips'), onToggle: on('toggle'), onBlur: on('blur'), onCfg: on('cfg'),
 });

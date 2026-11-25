@@ -16,7 +16,7 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 // ---------- ajustes ----------
 const cfgFile = () => path.join(app.getPath('userData'), 'ilha.json');
-const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [], monitor: 'primary', shelf: [], favs: [], outages: [], liveAlerts: true };
+const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [], monitor: 'primary', shelf: [], favs: [], outages: [], liveAlerts: true, islandStyle: 'notch', islandColor: 'black', islandAlpha: 100, favIcons: {} };
 let cfg = { ...DEFAULTS };
 function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch (_) {} }
 let saveT = null;
@@ -158,7 +158,7 @@ function claudeServer() {
   const http = require('http');
   const srv = http.createServer((req, res) => {
     const end = (code, msg = '') => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(msg); };
-    if (req.method !== 'POST' || req.url !== '/claude') return end(404);
+    if (req.method !== 'POST' || (req.url !== '/claude' && req.url !== '/claude/status')) return end(404);
     const key = String(req.headers['x-ilha-key'] || '');
     const same = k => !!k && key.length === k.length && require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(k));
     if (!same(cfg.claudeKey)) return end(401);
@@ -166,16 +166,147 @@ function claudeServer() {
     req.on('data', c => { size += c.length; if (size > 256e3) req.destroy(); else chunks.push(c); });
     req.on('end', () => {
       let j = {}; try { j = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (_) {}
+      end(204);
+      if (req.url === '/claude/status') return claudeStatus(j);
       const ev = String(j.hook_event_name || '');
       const project = j.cwd ? String(j.cwd).split(/[\\/]/).filter(Boolean).pop() || '' : '';
+      claudeEvent(ev, j, project);
       if (ev === 'Stop' || ev === 'Notification') {
         send('claude', { event: ev, message: String(j.message || '').slice(0, 300), type: String(j.notification_type || ''), project, session: String(j.session_id || '').slice(0, 12) });
       }
-      end(204);
     });
   });
   srv.on('error', () => {}); // porta ocupada: só não recebe avisos
   srv.listen(CLAUDE_PORT, '127.0.0.1');
+}
+
+// ---------- Claude ao vivo: o que está fazendo, há quanto tempo, tokens e limites ----------
+const claude = { sessions: new Map(), limits: null, ctx: null, model: '', log: [], current: null };
+const base = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+function toolText(tool, inp = {}) {
+  const t = String(tool || '');
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(t)) return `Editando ${base(inp.file_path || inp.notebook_path)}`;
+  if (t === 'Read') return `Lendo ${base(inp.file_path)}`;
+  if (t === 'Bash' || t === 'PowerShell') return inp.description ? String(inp.description) : `Rodando ${String(inp.command || '').slice(0, 50)}`;
+  if (t === 'Grep' || t === 'Glob') return `Procurando ${String(inp.pattern || '').slice(0, 40)}`;
+  if (/^Web(Fetch|Search)$/.test(t)) return 'Pesquisando na web';
+  if (t === 'Agent' || t === 'Task') return `Agente: ${String(inp.description || 'trabalhando').slice(0, 50)}`;
+  if (t === 'Skill') return `Usando a skill ${String(inp.skill || '')}`;
+  if (/^mcp__.*Browser|claude-in-chrome/i.test(t)) return 'Usando o navegador';
+  if (/^mcp__.*computer-use/i.test(t)) return 'Controlando o computador';
+  if (/^mcp__ccd_turn__/.test(t)) return 'Organizando as tarefas';
+  if (/^mcp__/.test(t)) return `Usando ${t.split('__').slice(1).join(' · ').replace(/_/g, ' ')}`;
+  return `Usando ${t}`;
+}
+// soma os tokens registrados no histórico da conversa (lê só o que foi acrescentado desde a última vez)
+function readTranscript(s) {
+  if (!s.transcript) return;
+  try {
+    const size = fs.statSync(s.transcript).size;
+    if (size < s.offset) { s.offset = 0; s.seen.clear(); s.tokens = { in: 0, out: 0, cw: 0, cr: 0 }; }
+    if (size === s.offset) return;
+    const fd = fs.openSync(s.transcript, 'r');
+    const len = Math.min(size - s.offset, 32e6), buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, s.offset); fs.closeSync(fd);
+    const text = buf.toString('utf8'), lastNl = text.lastIndexOf('\n');
+    if (lastNl < 0) return;
+    s.offset += Buffer.byteLength(text.slice(0, lastNl + 1));
+    for (const line of text.slice(0, lastNl).split('\n')) {
+      if (!line.includes('"usage"')) continue;
+      let o; try { o = JSON.parse(line); } catch (_) { continue; }
+      const m = o.message, u = m?.usage; if (!u) continue;
+      const id = m.id || o.uuid; if (s.seen.has(id)) continue; s.seen.add(id);
+      s.tokens.in += u.input_tokens || 0; s.tokens.out += u.output_tokens || 0;
+      s.tokens.cw += u.cache_creation_input_tokens || 0; s.tokens.cr += u.cache_read_input_tokens || 0;
+    }
+  } catch (_) {}
+}
+const spent = t => t.in + t.out + t.cw; // tokens novos (sem contar leitura de cache)
+function claudeSummary() {
+  const s = claude.current && claude.sessions.get(claude.current);
+  const working = [...claude.sessions.values()].filter(x => x.working);
+  return {
+    working: !!s?.working, project: s?.project || '', activity: s?.activity || '', startedAt: s?.startedAt || 0, endedAt: s?.endedAt || 0,
+    tokensTask: s && s.taskBase ? spent(s.tokens) - s.taskBase.spent : 0, outTask: s && s.taskBase ? s.tokens.out - s.taskBase.out : 0,
+    tokensSession: s ? spent(s.tokens) : 0, cacheSession: s ? s.tokens.cr : 0,
+    limits: claude.limits, ctx: claude.ctx, model: claude.model, active: working.length, log: claude.log.slice(0, 12),
+  };
+}
+let claudeSendT = null;
+function claudeSend() { clearTimeout(claudeSendT); claudeSendT = setTimeout(() => send('claudeState', claudeSummary()), 60); }
+function claudeLog(text, project) { claude.log.unshift({ t: Date.now(), text, project }); claude.log.length = Math.min(claude.log.length, 40); }
+function claudeEvent(ev, j, project) {
+  const id = String(j.session_id || 'sessao');
+  let s = claude.sessions.get(id);
+  if (!s) { s = { id, project, working: false, startedAt: 0, endedAt: 0, activity: '', transcript: '', offset: 0, seen: new Set(), tokens: { in: 0, out: 0, cw: 0, cr: 0 }, taskBase: null, lastAt: 0 }; claude.sessions.set(id, s); }
+  if (j.transcript_path) s.transcript = String(j.transcript_path);
+  if (project) s.project = project;
+  s.lastAt = Date.now(); claude.current = id;
+  readTranscript(s);
+  if (ev === 'UserPromptSubmit') {
+    s.working = true; s.startedAt = Date.now(); s.endedAt = 0; s.activity = 'Pensando…';
+    s.taskBase = { spent: spent(s.tokens), out: s.tokens.out };
+    claudeLog('Nova tarefa' + (j.prompt ? `: ${String(j.prompt).replace(/\s+/g, ' ').slice(0, 70)}` : ''), s.project);
+  } else if (ev === 'PreToolUse') {
+    if (!s.working) { s.working = true; s.startedAt = s.startedAt && !s.endedAt ? s.startedAt : Date.now(); s.endedAt = 0; if (!s.taskBase) s.taskBase = { spent: spent(s.tokens), out: s.tokens.out }; }
+    s.activity = toolText(j.tool_name, j.tool_input || {});
+    claudeLog(s.activity, s.project);
+  } else if (ev === 'Notification') {
+    if (/permission|approval/i.test(String(j.message || '')) || j.notification_type === 'permission_prompt') { s.activity = 'Esperando sua permissão'; claudeLog(s.activity, s.project); }
+  } else if (ev === 'Stop') {
+    s.working = false; s.endedAt = Date.now(); s.activity = 'Terminou';
+    claudeLog(`Terminou em ${Math.max(1, Math.round((s.endedAt - (s.startedAt || s.endedAt)) / 60000))} min`, s.project);
+  }
+  claudeSend();
+}
+function claudeStatus(j) {
+  const rl = j.rate_limits || {};
+  const lim = k => rl[k] && typeof rl[k].used_percentage === 'number' ? { p: rl[k].used_percentage, reset: rl[k].resets_at || 0 } : null;
+  if (rl.five_hour || rl.seven_day) claude.limits = { five: lim('five_hour'), seven: lim('seven_day'), at: Date.now() };
+  const cw = j.context_window;
+  if (cw && typeof cw.used_percentage === 'number') claude.ctx = { p: cw.used_percentage, size: cw.context_window_size || 0 };
+  if (j.model) claude.model = String(j.model.display_name || j.model.id || '');
+  if (j.session_id && j.transcript_path) { const s = claude.sessions.get(String(j.session_id)); if (s && !s.transcript) s.transcript = String(j.transcript_path); }
+  claudeSend();
+}
+// enquanto trabalha: atualiza os tokens e marca como parada a sessão sem sinal há 15 min (ex.: interrompida)
+setInterval(() => {
+  let changed = false;
+  for (const s of claude.sessions.values()) {
+    if (!s.working) continue;
+    readTranscript(s); changed = true;
+    if (Date.now() - s.lastAt > 15 * 60e3) { s.working = false; s.endedAt = s.lastAt; s.activity = 'Parado'; }
+  }
+  if (changed) claudeSend();
+}, 3000);
+
+// ---------- ícones dos sites favoritos ----------
+async function siteIcon(url) {
+  cfg.favIcons = cfg.favIcons || {};
+  if (cfg.favIcons[url]) return cfg.favIcons[url];
+  const get = async (u, accept) => { const r = await fetch(u, { signal: AbortSignal.timeout(6000), headers: { accept, 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ilha/1.0' }, redirect: 'follow' }); if (!r.ok) throw new Error(String(r.status)); return r; };
+  const toData = async r => {
+    const type = (r.headers.get('content-type') || '').split(';')[0] || 'image/x-icon';
+    if (!/^image\//.test(type)) throw new Error('não é imagem');
+    const b = Buffer.from(await r.arrayBuffer()); if (!b.length || b.length > 600e3) throw new Error('tamanho');
+    return `data:${type};base64,${b.toString('base64')}`;
+  };
+  const cands = [];
+  try {
+    const r = await get(url, 'text/html'); const html = (await r.text()).slice(0, 300e3), baseUrl = r.url;
+    for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+      const tag = m[0], rel = /rel=["']?([^"'>]+)/i.exec(tag)?.[1]?.toLowerCase() || '', href = /href=["']?([^"'\s>]+)/i.exec(tag)?.[1];
+      if (!href || !/icon/.test(rel)) continue;
+      const size = parseInt(/sizes=["']?(\d+)/i.exec(tag)?.[1] || (rel.includes('apple') ? '180' : '16'), 10);
+      cands.push({ u: new URL(href.replace(/&amp;/g, '&'), baseUrl).href, size: rel.includes('mask') ? 0 : size });
+    }
+    cands.sort((a, b) => Math.abs(a.size - 96) - Math.abs(b.size - 96)); // perto de 96 px fica nítido sem pesar
+    cands.push({ u: new URL('/favicon.ico', baseUrl).href });
+  } catch (_) { try { cands.push({ u: new URL('/favicon.ico', url).href }); } catch (_) {} }
+  for (const c of cands.slice(0, 5)) {
+    try { const d = await toData(await get(c.u, 'image/*')); cfg.favIcons[url] = d; saveCfg(); return d; } catch (_) {}
+  }
+  return '';
 }
 
 // ---------- arquivos: ícones, abrir e arrastar para fora ----------
@@ -378,7 +509,9 @@ function setupIpc() {
     return cfg;
   });
   // só repassa comandos conhecidos ao ajudante
-  ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?)$/.test(String(c))) helperCmd(c); });
+  ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?|radio (wifi|bt) (on|off)|radios)$/.test(String(c))) helperCmd(c); });
+  ipcMain.handle('siteicon', (_, url) => /^https?:\/\//.test(String(url)) ? siteIcon(String(url)) : '');
+  ipcMain.handle('claudeState', () => claudeSummary());
   ipcMain.handle('fileinfo', (_, paths) => Promise.all((paths || []).slice(0, 50).map(p => fileInfo(String(p)))));
   ipcMain.on('openpath', (_, p) => { p = String(p); if (/^https?:\/\//.test(p)) shell.openExternal(p); else shell.openPath(p); });
   ipcMain.on('reveal', (_, p) => shell.showItemInFolder(String(p)));

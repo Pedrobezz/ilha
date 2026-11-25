@@ -158,6 +158,33 @@ function Get-Media {
   Out-J @{ t = 'media'; has = $true; title = "$($p.Title)"; artist = "$($p.Artist)"; album = "$($p.AlbumTitle)"; app = "$($s.SourceAppUserModelId)"; playing = ($status -eq 4); pos = $pos; end = $end; art = $script:lastArt }
 }
 
+# ---- Wi-Fi e Bluetooth (Windows.Devices.Radios) ----
+$radios = @(); $lastRadios = ''
+function Load-Radios {
+  if (-not $asTaskGeneric) { return }
+  try {
+    [void][Windows.Devices.Radios.Radio, Windows.System.Devices, ContentType = WindowsRuntime]
+    [void](Await ([Windows.Devices.Radios.Radio]::RequestAccessAsync()) ([Windows.Devices.Radios.RadioAccessStatus]))
+    $script:radios = @(Await ([Windows.Devices.Radios.Radio]::GetRadiosAsync()) ([System.Collections.Generic.IReadOnlyList[Windows.Devices.Radios.Radio]]))
+  } catch { $script:radios = @() }
+}
+function Get-Radios([bool]$force) {
+  $w = $script:radios | Where-Object { "$($_.Kind)" -eq 'WiFi' } | Select-Object -First 1
+  $b = $script:radios | Where-Object { "$($_.Kind)" -eq 'Bluetooth' } | Select-Object -First 1
+  $ssid = ''
+  if ($w -and "$($w.State)" -eq 'On') { $m = (netsh wlan show interfaces) -match '^\s+SSID\s+:' | Select-Object -First 1; if ($m) { $ssid = ($m -split ':', 2)[1].Trim() } }
+  $o = @{ t = 'radios'; wifi = @{ has = [bool]$w; on = ($w -and "$($w.State)" -eq 'On') }; bt = @{ has = [bool]$b; on = ($b -and "$($b.State)" -eq 'On') }; ssid = $ssid }
+  $sig = "$($o.wifi.has)$($o.wifi.on)$($o.bt.has)$($o.bt.on)$ssid"
+  if ($force -or $sig -ne $script:lastRadios) { $script:lastRadios = $sig; Out-J $o }
+}
+function Set-Radio([string]$kind, [bool]$on) {
+  $k = if ($kind -eq 'bt') { 'Bluetooth' } else { 'WiFi' }
+  $r = $script:radios | Where-Object { "$($_.Kind)" -eq $k } | Select-Object -First 1
+  if (-not $r) { return }
+  $st = if ($on) { [Windows.Devices.Radios.RadioState]::On } else { [Windows.Devices.Radios.RadioState]::Off }
+  try { [void](Await ($r.SetStateAsync($st)) ([Windows.Devices.Radios.RadioAccessStatus])) } catch {}
+}
+
 function Get-Disk {
   $d = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
   Out-J @{ t = 'disk'; drives = @($d | ForEach-Object { @{ name = $_.Name; used = [int64]$_.Used; total = [int64]($_.Used + $_.Free) } }) }
@@ -183,6 +210,8 @@ while ($true) {
         try { $s = $mgr.GetCurrentSession(); if ($s) { [void](Await ($s.TryChangePlaybackPositionAsync([int64]([double]::Parse($parts[1], $inv) * 10000000))) ([bool])) } } catch {}
         $refresh = $true
       }
+      'radio' { Set-Radio $parts[1] ($parts[2] -eq 'on'); Start-Sleep -Milliseconds 400; Get-Radios $true }
+      'radios' { Get-Radios $true }
       'mon'   { [IslandNative]::MonX = [int]$parts[1]; [IslandNative]::MonY = [int]$parts[2]; $lastFg = $null }
       'disk'  { Get-Disk }
       'quit'  { exit }
@@ -204,6 +233,8 @@ while ($true) {
   if ($refresh) { Start-Sleep -Milliseconds 350; Get-Media }
   elseif ($i % 6 -eq 3) { Get-Media }
   if ($i % 180 -eq 0) { Get-Disk }
+  if ($i % 1100 -eq 5) { Load-Radios }   # recarrega a lista de rádios a cada ~3 min (e logo no início)
+  if ($i % 18 -eq 9) { Get-Radios $false }
   Start-Sleep -Milliseconds 160
   $i++
 }
