@@ -37,6 +37,7 @@
         <button data-tab="sys"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3M14.5 2.5v3M9.5 18.5v3M14.5 18.5v3M2.5 9.5h3M2.5 14.5h3M18.5 9.5h3M18.5 14.5h3"/></svg><span>Sistema</span></button>
         <button data-tab="casa"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg><span>Casa</span></button>
         <button data-tab="tools"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg><span>Foco</span></button>
+        <button data-tab="files"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 13.5v7M13.5 17h7"/></svg><span>Atalhos</span></button>
         <button data-tab="set"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Ajustes</span></button>
       </nav>
       <div class="bar-r" id="bar-status"></div>
@@ -50,7 +51,7 @@
             <div class="clock" id="clock">--:--</div>
             <div class="date" id="date"></div>
             <div class="week" id="week"></div>
-            <div class="weather" id="weather">
+            <div class="weather" id="weather" role="button" title="Ver previsão">
               <div class="w-icon"></div>
               <div class="w-main"><b class="w-temp">--°</b><span class="w-desc">Carregando clima…</span></div>
               <div class="w-side"><span class="w-city"></span><span class="w-mm"></span></div>
@@ -65,11 +66,14 @@
             </div>
             <div class="m-prog"><span class="m-pos">0:00</span><div class="track"><i></i></div><span class="m-end">0:00</span></div>
             <div class="m-ctrl">
-              <button data-m="vdown" class="sm" title="Diminuir volume"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/></svg></button>
               <button data-m="prev" title="Anterior"><svg viewBox="0 0 24 24" class="fill"><path d="M11 12 20 5.5v13zM2 12l9-6.5v13z"/></svg></button>
               <button data-m="play" class="big" title="Tocar/pausar"><svg viewBox="0 0 24 24" class="fill ic-play"><path d="M7 4.5v15l13-7.5z"/></svg><svg viewBox="0 0 24 24" class="fill ic-pause"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg></button>
               <button data-m="next" title="Próxima"><svg viewBox="0 0 24 24" class="fill"><path d="M13 12 4 5.5v13zM22 12l-9-6.5v13z"/></svg></button>
-              <button data-m="vup" class="sm" title="Aumentar volume"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18.5 6.5a8 8 0 0 1 0 11"/></svg></button>
+            </div>
+            <div class="m-vol">
+              <button id="vol-mute" title="Mudo"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path class="vw1" d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/><path class="vw2" d="M18.5 6.5a8 8 0 0 1 0 11"/><path class="vx" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+              <input type="range" class="slider vol-slider" id="vol" min="0" max="100" step="1" value="30">
+              <b id="vol-v">30%</b>
             </div>
           </div>
 
@@ -85,6 +89,11 @@
             </div>
             <button class="quick" data-go="net"><svg viewBox="0 0 24 24"><path d="M12 13.5 16.5 9"/><path d="M3.5 17a9 9 0 1 1 17 0"/></svg>Testar internet</button>
           </div>
+        </div>
+        <div class="forecast" id="forecast">
+          <div class="fc-h"><div><b id="fc-city">Previsão</b><span id="fc-now"></span></div><button class="fc-x" id="fc-close" title="Fechar"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+          <div class="fc-hours" id="fc-hours"></div>
+          <div class="fc-days" id="fc-days"></div>
         </div>
       </section>
 
@@ -177,22 +186,49 @@
         </div>
       </section>
 
+      <!-- ATALHOS: prateleira de arquivos e favoritos -->
+      <section class="page" data-page="files">
+        <div class="files-grid">
+          <div class="card shelf-card r1" id="shelf-card">
+            <div class="card-h"><span>Prateleira</span><button id="shelf-clear" class="link">Limpar</button></div>
+            <div class="shelf" id="shelf"></div>
+            <div class="drop-hint"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg><span>Solte para guardar aqui</span></div>
+          </div>
+          <div class="card fav-card r2" id="fav-card">
+            <div class="card-h"><span>Favoritos</span><em>arraste apps, pastas ou arquivos</em></div>
+            <div class="favs" id="favs"></div>
+            <div class="fav-add"><input id="fav-url" placeholder="Adicionar site (ex.: youtube.com)" spellcheck="false"><button id="fav-add" class="pill-btn">Adicionar</button></div>
+            <div class="drop-hint"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg><span>Solte para virar favorito</span></div>
+          </div>
+        </div>
+      </section>
+
       <!-- AJUSTES -->
       <section class="page" data-page="set">
-        <div class="set-grid">
-          <div class="group r1">
-            <label class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></span><span class="rt">Cidade do clima</span><input id="set-city" placeholder="Automática" spellcheck="false"></label>
-            <div class="row"><span class="ri" style="--c:#64d2ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></span><span class="rt">Transparência</span><div class="slide-wrap"><svg viewBox="0 0 24 24" class="sl-ic"><rect x="5" y="5" width="14" height="14" rx="3.5" fill="currentColor"/></svg><input type="range" class="slider" id="set-glass" min="0" max="70" step="1"><svg viewBox="0 0 24 24" class="sl-ic"><rect x="5" y="5" width="14" height="14" rx="3.5" stroke-dasharray="2.5 2.5"/></svg><b id="set-glass-v">22%</b></div></div>
-            <div class="row"><span class="ri" style="--c:linear-gradient(135deg,#e8794a,#4a6ae8)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1" fill="currentColor"/></svg></span><span class="rt">Tema</span><div class="swatches" id="set-theme"></div></div>
-            <label class="row"><span class="ri" style="--c:#5e5ce6"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/></svg></span><span class="rt">Esconder com janela maximizada</span><input type="checkbox" class="switch" id="set-hide"></label>
-            <label class="row"><span class="ri" style="--c:#30d158"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Iniciar com o Windows</span><input type="checkbox" class="switch" id="set-start"></label>
+        <div class="set-cols">
+          <div class="set-col">
+            <h4 class="gh r1">Aparência</h4>
+            <div class="group r1">
+              <div class="row"><span class="ri" style="--c:#64d2ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg></span><span class="rt">Transparência</span><div class="slide-wrap"><input type="range" class="slider" id="set-glass" min="0" max="70" step="1"><b id="set-glass-v">22%</b></div></div>
+              <div class="row col"><div class="row-top"><span class="ri" style="--c:linear-gradient(135deg,#e8794a,#4a6ae8)"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A4.6 4.6 0 0 0 21 9.8C21 6 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1" fill="currentColor"/></svg></span><span class="rt">Tema</span><em class="theme-name" id="theme-name"></em></div><div class="swatches" id="set-theme"></div></div>
+            </div>
+            <h4 class="gh r2">Contas e dados</h4>
+            <div class="group r2">
+              <label class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg></span><span class="rt">Cidade do clima</span><input id="set-city" placeholder="Automática" spellcheck="false"></label>
+              <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span><span class="rt">SmartHouse</span><input id="set-sh" placeholder="Detectar neste PC" spellcheck="false"></label>
+            </div>
           </div>
-          <div class="group r2">
-            <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></span><span class="rt">Link do SmartHouse</span><input id="set-sh" placeholder="Detectar neste PC" spellcheck="false"></label>
-            <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span><span class="rt">Abrir pelo teclado</span><span class="kbd"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espaço</kbd></span></div>
-            <div class="row"><span class="ri" style="--c:#ff453a"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Fechar a Ilha</span><button id="set-quit" class="pill-btn danger">Sair</button></div>
+          <div class="set-col">
+            <h4 class="gh r1">Comportamento</h4>
+            <div class="group r1">
+              <label class="row"><span class="ri" style="--c:#5e5ce6"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18"/></svg></span><span class="rt">Esconder com janela maximizada</span><input type="checkbox" class="switch" id="set-hide"></label>
+              <div class="row"><span class="ri" style="--c:#30b0c7"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="rt">Monitor</span><div class="seg" id="set-monitor"><button data-v="primary">Principal</button><button data-v="cursor">Do mouse</button></div></div>
+              <label class="row"><span class="ri" style="--c:#ff375f"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span><span class="rt">Avisos ao vivo</span><input type="checkbox" class="switch" id="set-alerts"></label>
+              <label class="row"><span class="ri" style="--c:#30d158"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Iniciar com o Windows</span><input type="checkbox" class="switch" id="set-start"></label>
+              <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span><span class="rt">Abrir pelo teclado</span><span class="kbd"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espaço</kbd></span></div>
+            </div>
+            <div class="set-foot r3"><span>Ilha <span id="ver"></span></span><button id="set-quit" class="pill-btn danger">Sair da Ilha</button></div>
           </div>
-          <p class="foot r3">Ilha <span id="ver"></span> · passe o mouse no topo da tela para abrir</p>
         </div>
       </section>
     </div>

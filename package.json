@@ -1,18 +1,62 @@
 {
   "name": "ilha",
   "productName": "Ilha",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ilha dinâmica para o Windows, no topo da tela, estilo Apple",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "icon": "node build/make-icon.js",
+    "dist": "electron-builder --win nsis --publish never"
   },
   "author": "Pedro Bez",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^37.2.0"
+    "electron": "^37.2.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.0"
+  },
+  "build": {
+    "appId": "com.pedrobez.ilha",
+    "productName": "Ilha",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "helper.ps1",
+      "renderer/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "helper.ps1"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Ilha-Setup-${version}.exe",
+      "shortcutName": "Ilha",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "Ilha"
+    }
   }
 }

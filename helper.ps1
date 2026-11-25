@@ -12,6 +12,22 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Net.NetworkInformation;
 
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioEndpointVolume {
+  int f(); int g(); int h(); int i();
+  int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
+  int j();
+  int GetMasterVolumeLevelScalar(out float pfLevel);
+  int k(); int l(); int m(); int n();
+  int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, Guid pguidEventContext);
+  int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+}
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDevice { int Activate(ref Guid iid, int clsCtx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint); }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] public class MMDeviceEnumeratorCom { }
+
 public static class IslandNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
@@ -38,6 +54,30 @@ public static class IslandNative {
 
   public static void Key(int vk) { keybd_event((byte)vk, 0, 0, UIntPtr.Zero); keybd_event((byte)vk, 0, 2, UIntPtr.Zero); }
 
+  public static int MonX = 0, MonY = 0;
+
+  // ---- volume do Windows (Core Audio) ----
+  static IAudioEndpointVolume vol; static DateTime volAt = DateTime.MinValue;
+  static IAudioEndpointVolume Vol() {
+    if (vol == null || (DateTime.UtcNow - volAt).TotalSeconds > 4) {
+      try {
+        var en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorCom());
+        IMMDevice dev; Marshal.ThrowExceptionForHR(en.GetDefaultAudioEndpoint(0, 1, out dev));
+        Guid iid = typeof(IAudioEndpointVolume).GUID; object o;
+        Marshal.ThrowExceptionForHR(dev.Activate(ref iid, 23, IntPtr.Zero, out o));
+        vol = (IAudioEndpointVolume)o; volAt = DateTime.UtcNow;
+      } catch { vol = null; }
+    }
+    return vol;
+  }
+  // devolve "nível|mudo" (ex.: "0.42|0") ou "" sem saída de áudio
+  public static string GetVol() {
+    try { var v = Vol(); if (v == null) return ""; float l; bool m; v.GetMasterVolumeLevelScalar(out l); v.GetMute(out m); return Math.Round(l, 2).ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + (m ? "1" : "0"); }
+    catch { vol = null; return ""; }
+  }
+  public static void SetVol(float l) { try { var v = Vol(); if (v == null) return; v.SetMasterVolumeLevelScalar(Math.Max(0f, Math.Min(1f, l)), Guid.Empty); if (l > 0) v.SetMute(false, Guid.Empty); } catch { vol = null; } }
+  public static void ToggleMute() { try { var v = Vol(); if (v == null) return; bool m; v.GetMute(out m); v.SetMute(!m, Guid.Empty); } catch { vol = null; } }
+
   // "1" = a janela da frente cobre o monitor principal (maximizada ou tela cheia), "0" = não, "" = manter o estado anterior
   public static string Fg(uint selfPid) {
     IntPtr h = GetForegroundWindow();
@@ -47,8 +87,8 @@ public static class IslandNative {
     var sb = new StringBuilder(256); GetClassName(h, sb, 256); string cls = sb.ToString();
     if (cls == "Progman" || cls == "WorkerW") return "0";
     if (cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" || cls == "Windows.UI.Core.CoreWindow" || cls == "XamlExplorerHostIslandWindow" || cls == "TopLevelWindowForOverflowXamlIsland" || cls == "NotifyIconOverflowWindow") return "";
-    POINT o = new POINT();
-    IntPtr prim = MonitorFromPoint(o, 1);
+    POINT o = new POINT(); o.X = MonX; o.Y = MonY;
+    IntPtr prim = MonitorFromPoint(o, 2); // monitor onde a ilha está
     if (MonitorFromWindow(h, 2) != prim) return "0";
     if (IsIconic(h)) return "0";
     if (IsZoomed(h)) return "1";
@@ -123,22 +163,36 @@ function Get-Disk {
   Out-J @{ t = 'disk'; drives = @($d | ForEach-Object { @{ name = $_.Name; used = [int64]$_.Used; total = [int64]($_.Used + $_.Free) } }) }
 }
 
-$lastFg = $null; $i = 0
+$lastFg = $null; $lastVol = $null; $i = 0
 $prevNet = [IslandNative]::Net(); $prevT = [DateTime]::UtcNow
 Out-J @{ t = 'ready'; media = [bool]$mgr }
 while ($true) {
   $refresh = $false
   while ($null -ne ($c = [IslandNative]::Next())) {
-    switch ($c) {
+    $parts = $c -split ' '
+    $inv = [System.Globalization.CultureInfo]::InvariantCulture
+    switch ($parts[0]) {
       'play'  { [IslandNative]::Key(0xB3); $refresh = $true }
       'next'  { [IslandNative]::Key(0xB0); $refresh = $true }
       'prev'  { [IslandNative]::Key(0xB1); $refresh = $true }
-      'mute'  { [IslandNative]::Key(0xAD) }
+      'mute'  { [IslandNative]::ToggleMute() }
       'vdown' { [IslandNative]::Key(0xAE) }
       'vup'   { [IslandNative]::Key(0xAF) }
+      'setvol' { [IslandNative]::SetVol([single]::Parse($parts[1], $inv)) }
+      'seek'  {
+        try { $s = $mgr.GetCurrentSession(); if ($s) { [void](Await ($s.TryChangePlaybackPositionAsync([int64]([double]::Parse($parts[1], $inv) * 10000000))) ([bool])) } } catch {}
+        $refresh = $true
+      }
+      'mon'   { [IslandNative]::MonX = [int]$parts[1]; [IslandNative]::MonY = [int]$parts[2]; $lastFg = $null }
       'disk'  { Get-Disk }
       'quit'  { exit }
     }
+  }
+  $v = [IslandNative]::GetVol()
+  if ($v -ne '' -and $v -ne $lastVol) {
+    $vp = $v -split '\|'
+    Out-J @{ t = 'vol'; level = [double]::Parse($vp[0], [System.Globalization.CultureInfo]::InvariantCulture); muted = ($vp[1] -eq '1'); first = ($null -eq $lastVol) }
+    $lastVol = $v
   }
   $fg = [IslandNative]::Fg([uint32]$SelfPid)
   if ($fg -ne '' -and $fg -ne $lastFg) { $lastFg = $fg; Out-J @{ t = 'fg'; covered = ($fg -eq '1') } }

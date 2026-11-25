@@ -2,7 +2,7 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const isl = $('#island');
 const WIN_W = 900;
-const SIZES = { home: [780, 318], net: [760, 352], sys: [760, 360], casa: [790, 384], tools: [760, 332], set: [700, 480] };
+const SIZES = { home: [790, 330], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], set: [860, 420] };
 const COLLAPSED = [196, 32];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
@@ -20,6 +20,8 @@ const S = {
 /* =================== estado da ilha =================== */
 function activity() {
   const t = S.timer;
+  if (S.notice && S.notice.until > Date.now()) return 'notice';
+  if (S.volFlash && S.volFlash.until > Date.now()) return 'vol';
   if (t.running || (t.left < t.total && t.left > 0)) return 'timer';
   if (S.speed.running) return 'speed';
   if (S.media?.has && S.media.playing) return 'media';
@@ -30,9 +32,11 @@ function render() {
   let mode, size;
   if (S.alert) { mode = 'alerting'; size = [400, 84]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { mode = 'compact'; size = [activity() === 'speed' ? 290 : 270, 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
-  const hidden = S.covered && (mode === 'collapsed' || mode === 'compact');
+  // avisos rápidos e o volume aparecem mesmo com janela maximizada
+  const transient = mode === 'compact' && ['notice', 'vol'].includes(activity());
+  const hidden = S.covered && (mode === 'collapsed' || mode === 'compact') && !transient;
   isl.className = mode + (hidden ? ' hidden-top' : '');
   isl.style.setProperty('--w', size[0] + 'px');
   isl.style.setProperty('--h', size[1] + 'px');
@@ -70,6 +74,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 // campos de texto: a janela só pega o foco quando precisa digitar
 document.addEventListener('mousedown', e => {
   const el = e.target.closest('input:not([type=checkbox]):not([type=range]), textarea');
+  if (!e.target.closest('#forecast, #weather')) $('#forecast')?.classList.remove('show');
   if (!el) return;
   if (!S.focused) { S.focused = true; window.ilha.focus(true); setTimeout(() => el.focus(), 40); }
 });
@@ -190,8 +195,13 @@ async function loadWeather(force) {
       if (!m?.latitude) throw new Error('sem localização');
       lat = m.latitude; lon = m.longitude; name = m.city || '';
     }
-    const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,apparent_temperature,relative_humidity_2m&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1`)).json();
-    const data = { at: Date.now(), city: S.cfg.city || '', name, t: w.current.temperature_2m, code: w.current.weather_code, day: w.current.is_day, feels: w.current.apparent_temperature, hum: w.current.relative_humidity_2m, max: w.daily.temperature_2m_max[0], min: w.daily.temperature_2m_min[0] };
+    const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,apparent_temperature,relative_humidity_2m&hourly=temperature_2m,weather_code,is_day,precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`)).json();
+    // próximas 12 horas a partir de agora
+    const nowH = w.current.time.slice(0, 13);
+    const h0 = Math.max(0, w.hourly.time.findIndex(t => t.slice(0, 13) === nowH));
+    const hours = w.hourly.time.slice(h0, h0 + 12).map((t, i) => ({ t, temp: w.hourly.temperature_2m[h0 + i], code: w.hourly.weather_code[h0 + i], day: w.hourly.is_day[h0 + i], rain: w.hourly.precipitation_probability?.[h0 + i] ?? 0 }));
+    const days = w.daily.time.map((t, i) => ({ t, code: w.daily.weather_code[i], max: w.daily.temperature_2m_max[i], min: w.daily.temperature_2m_min[i], rain: w.daily.precipitation_probability_max?.[i] ?? 0 }));
+    const data = { at: Date.now(), city: S.cfg.city || '', name, t: w.current.temperature_2m, code: w.current.weather_code, day: w.current.is_day, feels: w.current.apparent_temperature, hum: w.current.relative_humidity_2m, max: w.daily.temperature_2m_max[0], min: w.daily.temperature_2m_min[0], hours, days };
     lsSet('wx', data); showWeather(data);
   } catch (e) {
     $('#weather .w-desc').textContent = e.message === 'Cidade não encontrada' ? e.message : 'Clima indisponível';
@@ -205,8 +215,24 @@ function showWeather(d) {
   $('#weather').title = `Sensação de ${Math.round(d.feels)}° · umidade ${d.hum}%`;
   $('#weather .w-city').textContent = d.name;
   $('#weather .w-mm').textContent = `↑${Math.round(d.max)}° ↓${Math.round(d.min)}°`;
+  S.wx = d; renderForecast();
 }
 setInterval(() => loadWeather(), 15 * 60e3);
+
+// previsão: próximas horas + 7 dias (abre ao clicar no clima)
+function renderForecast() {
+  const d = S.wx; if (!d?.hours) return;
+  $('#fc-city').textContent = d.name || 'Previsão';
+  $('#fc-now').textContent = `${Math.round(d.t)}° agora · sensação ${Math.round(d.feels)}° · umidade ${d.hum}%`;
+  $('#fc-hours').innerHTML = d.hours.map((h, i) => `<div class="fc-hour"><span>${i ? h.t.slice(11, 13) + 'h' : 'Agora'}</span>${WX[wxInfo(h.code, h.day)[0]]}<b>${Math.round(h.temp)}°</b><em>${h.rain >= 20 ? h.rain + '%' : ''}</em></div>`).join('');
+  const lo = Math.min(...d.days.map(x => x.min)), hi = Math.max(...d.days.map(x => x.max));
+  $('#fc-days').innerHTML = d.days.map((x, i) => {
+    const name = i === 0 ? 'Hoje' : new Date(x.t + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+    return `<div class="fc-day" title="${esc(wxInfo(x.code, 1)[1])}"><span>${name[0].toUpperCase() + name.slice(1)}</span>${WX[wxInfo(x.code, 1)[0]]}<b>${Math.round(x.max)}°</b><small>${Math.round(x.min)}°</small><span class="rain">${x.rain >= 20 ? '💧' + x.rain + '%' : '&nbsp;'}</span></div>`;
+  }).join('');
+}
+$('#weather').addEventListener('click', () => { if (S.wx?.hours) $('#forecast').classList.add('show'); });
+$('#fc-close').addEventListener('click', () => $('#forecast').classList.remove('show'));
 
 /* =================== mídia =================== */
 const fmtT = s => { s = Math.max(0, Math.round(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -253,6 +279,57 @@ $$('[data-m]').forEach(b => b.addEventListener('click', () => {
   window.ilha.media(c);
   if (c === 'play' && S.media) { S.media.pos = mediaPos(); S.media.at = Date.now(); S.media.playing = !S.media.playing; setMedia({ ...S.media, has: true }); }
 }));
+// clicar na barra pula para aquele ponto
+$('.track').addEventListener('click', e => {
+  const m = S.media; if (!m?.end) return;
+  const r = e.currentTarget.getBoundingClientRect(), f = clamp((e.clientX - r.left) / r.width, 0, 1), sec = Math.round(f * m.end);
+  window.ilha.media('seek ' + sec);
+  m.pos = sec; m.at = Date.now(); tickMedia();
+});
+
+/* =================== volume =================== */
+let volLocalAt = 0;
+function showVol(level, muted) {
+  const p = Math.round(level * 100);
+  $('#vol').value = p; $('#vol').style.setProperty('--p', p + '%');
+  $('#vol-v').textContent = muted ? 'Mudo' : p + '%';
+  $('.m-vol').classList.toggle('muted', muted || p === 0);
+  $('.m-vol').classList.toggle('low', p < 40);
+}
+$('#vol').addEventListener('input', e => {
+  volLocalAt = Date.now();
+  const v = Number(e.target.value) / 100;
+  showVol(v, false);
+  window.ilha.media('setvol ' + v.toFixed(2));
+});
+$('#vol-mute').addEventListener('click', () => { volLocalAt = Date.now(); window.ilha.media('mute'); });
+function onVol(m) {
+  S.vol = m;
+  const external = Date.now() - volLocalAt > 700; // não foi o slider da própria ilha
+  if (external || m.muted !== S.volMuted) showVol(m.level, m.muted);
+  // mudou por fora (teclas de volume): a ilha mostra o indicador estilo iPhone
+  if (!m.first && external && !S.open) {
+    S.volFlash = { until: Date.now() + 1600 };
+    render(); clearTimeout(onVol.t); onVol.t = setTimeout(render, 1650);
+  }
+  S.volMuted = m.muted;
+  if (activity() === 'vol') renderCompact();
+}
+
+/* =================== avisos ao vivo =================== */
+const NOTE_IC = {
+  bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor"/></svg>',
+  battery: '<svg viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M22 10.5v3"/><rect x="5" y="9.5" width="4" height="5" rx="1" fill="currentColor"/></svg>',
+  wifi: '<svg viewBox="0 0 24 24"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16.3a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r=".8" fill="currentColor"/></svg>',
+  wifiOff: '<svg viewBox="0 0 24 24"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16.3a5 5 0 0 1 6 0M3 3l18 18"/></svg>',
+  home: '<svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
+};
+function notice(icon, color, title, text, ms = 3600) {
+  if (S.cfg.liveAlerts === false) return;
+  S.notice = { icon, color, title, text, until: Date.now() + ms };
+  $('#compact .c-left').dataset.k = '';
+  if (!S.open) { render(); clearTimeout(notice.t); notice.t = setTimeout(render, ms + 50); }
+}
 
 /* =================== atividade compacta =================== */
 const IC = {
@@ -262,6 +339,20 @@ const IC = {
 };
 function renderCompact() {
   const a = activity(), L = $('#compact .c-left'), R = $('#compact .c-right');
+  if (a === 'notice') {
+    const n = S.notice;
+    L.innerHTML = `<span class="c-ico" style="background:${n.color}33;color:${n.color}">${NOTE_IC[n.icon] || ''}</span><span style="color:${n.color}">${esc(n.title)}</span>`;
+    L.dataset.k = 'notice'; R.innerHTML = `<span class="c-note">${esc(n.text)}</span>`; R.dataset.k = '';
+    return;
+  }
+  if (a === 'vol') {
+    const v = S.vol || { level: 0, muted: false }, p = Math.round(v.level * 100);
+    const ic = v.muted || !p ? '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
+      : `<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>${p >= 40 ? '<path d="M18.5 6.5a8 8 0 0 1 0 11"/>' : ''}</svg>`;
+    L.innerHTML = `<span class="c-ico" style="color:#fff">${ic}</span>`; L.dataset.k = 'vol';
+    R.innerHTML = `<div class="vbar"><i style="width:${v.muted ? 0 : p}%"></i></div><b style="width:30px;text-align:right">${v.muted ? '0' : p}</b>`; R.dataset.k = '';
+    return;
+  }
   if (a === 'timer') {
     if (L.dataset.k !== 'timer') { L.innerHTML = `<span class="c-ico" style="background:rgba(255,159,10,.22);color:#ff9f0a">${IC.timer}</span><span style="color:#ff9f0a">${S.timer.running ? 'Foco' : 'Pausado'}</span>`; L.dataset.k = 'timer'; }
     L.lastChild.textContent = S.timer.running ? 'Foco' : 'Pausado';
@@ -315,6 +406,7 @@ window.ilha.onSys(s => {
 });
 window.ilha.onNative(m => {
   if (m.t === 'media') setMedia(m);
+  else if (m.t === 'vol') onVol(m);
   else if (m.t === 'net') {
     push(hist.down, m.down); push(hist.up, m.up);
     const [d, du] = fmtRate(m.down), [u, uu] = fmtRate(m.up);
@@ -351,6 +443,18 @@ async function initBattery() {
     };
     ['levelchange', 'chargingchange', 'dischargingtimechange'].forEach(e => b.addEventListener(e, upd));
     upd();
+    // avisos: carregador conectado/desconectado e bateria fraca
+    let lowWarned = false;
+    b.addEventListener('chargingchange', () => {
+      if (!S.battery) return;
+      const p = Math.round(b.level * 100);
+      if (b.charging) { lowWarned = false; notice('bolt', '#30d158', 'Carregando', `${p}% de bateria`); }
+      else notice('battery', '#ffffff', 'Na bateria', `${p}% restante`);
+    });
+    b.addEventListener('levelchange', () => {
+      const p = Math.round(b.level * 100);
+      if (S.battery && !b.charging && p <= 20 && !lowWarned) { lowWarned = true; notice('battery', '#ff453a', 'Bateria fraca', `${p}% · conecte o carregador`, 6000); }
+    });
   } catch (_) {}
 }
 
@@ -428,15 +532,45 @@ window.ilha.onSpeed(e => {
   }
   render();
 });
+// histórico de testes e de quedas da internet (alternáveis)
+S.histView = 'tests';
+const fmtDur = ms => { const s = Math.round(ms / 1000); if (s < 60) return `${s} s`; const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+const fmtWhen = t => { const d = new Date(t); return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`; };
 function renderHistory(h) {
-  h = h || [];
-  if (!h.length) { $('#hist').innerHTML = ''; return; }
-  const max = Math.max(...h.map(x => x.down), 1);
-  $('#hist').innerHTML = '<div class="hist-h">Histórico</div>' + h.slice(0, 5).map(x => {
-    const d = new Date(x.at);
-    return `<div class="hist-row"><span>${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span><div class="hb"><i style="width:${(100 * x.down / max).toFixed(0)}%"></i></div><span>↓ <b>${fmtNum(x.down)}</b></span><span>↑ <b>${fmtNum(x.up)}</b></span><span><b>${Math.round(x.ping)}</b> ms</span></div>`;
-  }).join('');
+  if (h) S.speedHist = h;
+  h = S.speedHist || [];
+  const c = S.conn || { online: true, since: Date.now(), outages: [] };
+  const outs = c.outages || [];
+  const today = outs.filter(o => o.start > Date.now() - 864e5);
+  const head = `<div class="hist-tabs"><button data-hv="tests" class="${S.histView === 'tests' ? 'on' : ''}">Histórico</button><button data-hv="outs" class="${S.histView === 'outs' ? 'on' : ''}">Quedas${today.length ? ` · ${today.length}` : ''}</button>
+    <span class="conn-st"><i class="conn-dot ${c.online ? '' : 'off'}"></i>${c.online ? `Online há ${fmtDur(Date.now() - c.since)}` : `Sem internet há ${fmtDur(Date.now() - c.since)}`}</span></div>`;
+  let body;
+  if (S.histView === 'outs') {
+    body = outs.length ? outs.slice(0, 5).map(o => `<div class="out-row ${o.end ? '' : 'now'}"><span>${fmtWhen(o.start)}</span><b>${o.end ? 'fora por ' + fmtDur(o.end - o.start) : 'fora agora'}</b></div>`).join('')
+      : '<div class="out-empty">Nenhuma queda registrada. A Ilha verifica a conexão a cada 5 segundos.</div>';
+  } else {
+    const max = Math.max(...h.map(x => x.down), 1);
+    body = h.length ? h.slice(0, 4).map(x => `<div class="hist-row"><span>${fmtWhen(x.at)}</span><div class="hb"><i style="width:${(100 * x.down / max).toFixed(0)}%"></i></div><span>↓ <b>${fmtNum(x.down)}</b></span><span>↑ <b>${fmtNum(x.up)}</b></span><span><b>${Math.round(x.ping)}</b> ms</span></div>`).join('')
+      : '<div class="out-empty">Nenhum teste ainda. Clique em Iniciar.</div>';
+  }
+  $('#hist').innerHTML = head + body;
 }
+$('#hist').addEventListener('click', e => { const b = e.target.closest('[data-hv]'); if (b) { S.histView = b.dataset.hv; renderHistory(); } });
+window.ilha.onConn(c => {
+  const prev = S.conn;
+  S.conn = { ...(prev || {}), online: c.online, since: Date.now(), outages: c.outages };
+  renderHistory();
+  if (c.event === 'down') notice('wifiOff', '#ff453a', 'Sem internet', 'A conexão caiu', 6000);
+  if (c.event === 'up') notice('wifi', '#30d158', 'Internet voltou', `ficou fora por ${fmtDur(c.duration || 0)}`, 4500);
+});
+setInterval(() => { if (S.open && S.tab === 'net') renderHistory(); }, 30000);
+
+// SmartHouse ao vivo: regras que dispararam
+window.ilha.onShLog(l => {
+  const m = /^Regra "?(.+?)"? disparou/.exec(l.msg || '');
+  if (m) notice('home', '#ff9f0a', 'Casa', `Regra “${m[1]}” disparou`, 4500);
+  else if (l.level === 'error') notice('home', '#ff453a', 'Casa', l.msg, 5000);
+});
 
 /* =================== casa (SmartHouse) =================== */
 const DIC = {
@@ -456,7 +590,7 @@ async function loadCasa() {
   try {
     const a = await window.ilha.sh({ route: 'all' });
     S.sh = a; S.shErr = '';
-    renderCasa();
+    renderCasa(); loadEnergy();
   } catch (e) {
     const msg = String(e.message || e).replace(/^Error invoking remote method 'sh': (Error: )?/, '');
     S.shErr = msg;
@@ -482,14 +616,48 @@ function renderCasa() {
   $('#sh-count').textContent = `${onN} ligado${onN === 1 ? '' : 's'}`;
   $('#sh-scenes').innerHTML = (S.sh.scenes || []).map(s => `<button class="scene" data-scene="${esc(s.id)}">${DIC.scene}${esc(s.name)}</button>`).join('');
   if (!devs.length) { $('#sh-devs').innerHTML = '<div class="empty">Nenhum aparelho encontrado no SmartHouse.</div>'; return; }
-  devs.sort((a, b) => String(a.room || '').localeCompare(String(b.room || '')) || a.name.localeCompare(b.name));
+  // favoritos primeiro, depois por cômodo e nome
+  const fav = new Set(S.cfg.shFav || []);
+  devs.sort((a, b) => (fav.has(b.id) - fav.has(a.id)) || String(a.room || '').localeCompare(String(b.room || '')) || a.name.localeCompare(b.name));
+  const STAR = '<svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z" fill="currentColor"/></svg>';
   $('#sh-devs').innerHTML = devs.map(d => {
     const s = d.state || {}, on = !!s.on && d.online !== false;
     const extra = d.type === 'ac'
       ? `<div class="ac-ctl"><button data-temp="-1">−</button><b>${s.target ?? '–'}°</b><button data-temp="1">+</button></div>`
       : s.channels?.length > 1 ? `<div class="gangs">${s.channels.map(c => `<i class="${c.on ? 'on' : ''}" data-ch="${esc(c.code)}" title="${esc(c.name || c.code)}"></i>`).join('')}</div>` : '';
-    return `<div role="button" class="dev t-${esc(d.type)} ${on ? 'on' : ''} ${d.online === false ? 'off-line' : ''}" data-id="${esc(d.id)}"><span class="d-ico">${DIC[d.type] || DIC.plug}</span>${extra}<div><div class="d-name">${esc(d.name)}</div><div class="d-st">${esc(devState(d))}</div></div></div>`;
+    return `<div role="button" class="dev t-${esc(d.type)} ${on ? 'on' : ''} ${d.online === false ? 'off-line' : ''}" data-id="${esc(d.id)}"><span class="d-ico">${DIC[d.type] || DIC.plug}</span>${extra}<span class="star ${fav.has(d.id) ? 'on' : ''}" data-star title="${fav.has(d.id) ? 'Tirar dos favoritos' : 'Favoritar'}">${STAR}</span><div><div class="d-name">${esc(d.name)}</div><div class="d-st">${esc(devState(d))}</div></div></div>`;
   }).join('');
+  renderEnergy();
+}
+
+// consumo das últimas 24 h (soma de todos os aparelhos que medem energia), em blocos de 30 min
+let energyAt = 0;
+async function loadEnergy() {
+  if (Date.now() - energyAt < 120e3 || !S.sh) return;
+  energyAt = Date.now();
+  const ids = (S.sh.devices || []).filter(d => d.caps?.metering || typeof d.state?.power === 'number').map(d => d.id).slice(0, 30);
+  const since = Date.now() - 24 * 3600e3, B = 48, buckets = new Array(B).fill(0);
+  await Promise.all(ids.map(async id => {
+    try {
+      const pts = await window.ilha.sh({ route: 'energy?id=' + encodeURIComponent(id) });
+      const sum = new Array(B).fill(0), n = new Array(B).fill(0);
+      for (const [t, w] of pts || []) { if (t < since) continue; const i = Math.min(B - 1, Math.floor((t - since) / (1800e3))); sum[i] += w; n[i]++; }
+      for (let i = 0; i < B; i++) if (n[i]) buckets[i] += sum[i] / n[i];
+    } catch (_) {}
+  }));
+  S.energy = buckets; renderEnergy();
+}
+function renderEnergy() {
+  const b = S.energy; let svg = $('#e-spark');
+  if (!b || !b.some(v => v > 0)) { svg?.remove(); return; }
+  if (!svg) { $('#sh-power').insertAdjacentHTML('afterend', '<svg class="e-spark" id="e-spark" viewBox="0 0 100 22" preserveAspectRatio="none"><path class="f"/><path class="l"/></svg>'); svg = $('#e-spark'); }
+  const mx = Math.max(...b, 1), pts = b.map((v, i) => `${(i / (b.length - 1) * 100).toFixed(1)} ${(20 - v / mx * 18).toFixed(1)}`);
+  const d = 'M' + pts.join(' L');
+  svg.querySelector('.l').setAttribute('d', d); svg.querySelector('.f').setAttribute('d', d + ' L100 22 L0 22 Z');
+  const kwh = b.reduce((a, v) => a + v * 0.5, 0) / 1000;
+  let tt = svg.querySelector('title');
+  if (!tt) { tt = document.createElementNS('http://www.w3.org/2000/svg', 'title'); svg.appendChild(tt); }
+  tt.textContent = `Consumo nas últimas 24 h · ${kwh.toFixed(1).replace('.', ',')} kWh`;
 }
 async function shCmd(id, cmd) {
   try { await window.ilha.sh({ method: 'POST', route: 'command', body: { id, cmd } }); }
@@ -497,7 +665,14 @@ async function shCmd(id, cmd) {
   setTimeout(loadCasa, 400);
 }
 $('#sh-devs').addEventListener('click', e => {
-  const tile = e.target.closest('.dev'); if (!tile || tile.classList.contains('off-line')) return;
+  const tile = e.target.closest('.dev'); if (!tile) return;
+  if (e.target.closest('[data-star]')) {
+    const id = tile.dataset.id, f = new Set(S.cfg.shFav || []);
+    f.has(id) ? f.delete(id) : f.add(id);
+    S.cfg.shFav = [...f]; window.ilha.setCfg({ shFav: S.cfg.shFav }); renderCasa();
+    return;
+  }
+  if (tile.classList.contains('off-line')) return;
   const d = S.sh?.devices.find(x => x.id === tile.dataset.id); if (!d) return;
   const t = e.target.closest('[data-temp]'), ch = e.target.closest('[data-ch]');
   if (t) { const v = clamp((d.state.target || 24) + Number(t.dataset.temp), 16, 30); d.state.target = v; renderCasa(); return shCmd(d.id, { action: 'temp', value: v }); }
@@ -580,7 +755,15 @@ function fillSettings() {
   $('#set-glass').value = S.cfg.glass ?? 22;
   applyGlass(S.cfg.glass ?? 22);
   applyTheme(S.cfg.theme || 'grafite');
+  $('#set-alerts').checked = S.cfg.liveAlerts !== false;
+  $$('#set-monitor button').forEach(b => b.classList.toggle('on', b.dataset.v === (S.cfg.monitor || 'primary')));
 }
+$('#set-alerts').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ liveAlerts: e.target.checked }); });
+$('#set-monitor').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.cfg = await window.ilha.setCfg({ monitor: b.dataset.v }); fillSettings();
+  toast(b.dataset.v === 'cursor' ? 'A ilha segue o monitor do mouse' : 'A ilha fica no monitor principal');
+});
 // transparência do vidro: 0% = quase sólido, 70% = bem transparente
 function applyGlass(t) {
   t = clamp(Number(t) || 0, 0, 70);
@@ -606,6 +789,7 @@ function applyTheme(id) {
   isl.style.setProperty('--acc1', t.a[0]); isl.style.setProperty('--acc2', t.a[1]);
   isl.style.setProperty('--accg', t.a[0] + 'b3');
   $$('#set-theme .sw').forEach(s => s.classList.toggle('on', s.dataset.theme === id));
+  $('#theme-name').textContent = t.name;
 }
 $('#set-theme').innerHTML = Object.entries(THEMES).map(([id, t]) =>
   `<button class="sw" data-theme="${id}" title="${t.name}" style="background:${t.g || 'linear-gradient(135deg, #48484a, #1c1c1e)'}"></button>`).join('');
@@ -624,6 +808,94 @@ $('#set-hide').addEventListener('change', async e => { S.cfg = await window.ilha
 $('#set-start').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ startup: e.target.checked }); toast(e.target.checked ? 'Vai abrir com o Windows' : 'Não abre mais com o Windows'); });
 $('#set-quit').addEventListener('click', () => window.ilha.quit());
 
+/* =================== atalhos: prateleira e favoritos =================== */
+const FILE_EMPTY = {
+  shelf: '<div class="empty-files"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>Arraste arquivos até a ilha para guardá-los aqui.<br>Depois arraste daqui para qualquer lugar.</div>',
+  favs: '<div class="empty-files"><svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.6 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg>Arraste apps, pastas ou arquivos para cá,<br>ou adicione um site abaixo.</div>',
+};
+const fileCache = new Map();
+async function infos(paths) {
+  const miss = paths.filter(p => !/^https?:/.test(p) && !fileCache.has(p));
+  if (miss.length) (await window.ilha.fileInfo(miss)).forEach(i => fileCache.set(i.path, i));
+  return paths.map(p => /^https?:/.test(p) ? { path: p, url: true, name: p.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, ''), exists: true } : fileCache.get(p) || { path: p, name: p, exists: false });
+}
+async function renderFiles(kind) {
+  const list = S.cfg[kind] || [], el = $('#' + kind);
+  if (!list.length) { el.innerHTML = FILE_EMPTY[kind]; return; }
+  const items = await infos(list);
+  el.innerHTML = items.map((f, i) => `<div class="fitem ${f.exists ? '' : 'missing'}" data-i="${i}" data-kind="${kind}" ${f.url ? '' : 'draggable="true"'} title="${esc(f.path)}">
+      ${f.url ? `<span class="letter">${esc(f.name[0]?.toUpperCase() || '?')}</span>` : f.icon ? `<img src="${f.icon}" alt="">` : `<span class="letter">${esc(f.name[0] || '?')}</span>`}
+      <span>${esc(f.name)}</span><button class="x" data-x title="Remover">✕</button></div>`).join('');
+}
+async function addFiles(kind, paths) {
+  paths = paths.filter(Boolean);
+  if (!paths.length) return;
+  const cur = S.cfg[kind] || [];
+  const next = [...cur, ...paths.filter(p => !cur.includes(p))].slice(-40);
+  S.cfg = await window.ilha.setCfg({ [kind]: next });
+  renderFiles(kind);
+  toast(kind === 'shelf' ? `${paths.length} na prateleira` : 'Adicionado aos favoritos');
+}
+async function removeFile(kind, i) {
+  const next = (S.cfg[kind] || []).filter((_, j) => j !== i);
+  S.cfg = await window.ilha.setCfg({ [kind]: next }); renderFiles(kind);
+}
+for (const kind of ['shelf', 'favs']) {
+  const el = $('#' + kind);
+  el.addEventListener('click', e => {
+    const it = e.target.closest('.fitem'); if (!it) return;
+    const p = S.cfg[kind][Number(it.dataset.i)];
+    if (e.target.closest('[data-x]')) return removeFile(kind, Number(it.dataset.i));
+    window.ilha.openPath(p);
+    if (kind === 'favs') close();
+  });
+  el.addEventListener('contextmenu', e => { const it = e.target.closest('.fitem'); if (it) { const p = S.cfg[kind][Number(it.dataset.i)]; if (!/^https?:/.test(p)) window.ilha.reveal(p); } });
+  // arrastar para fora: o Windows recebe o arquivo de verdade
+  el.addEventListener('dragstart', e => {
+    const it = e.target.closest('.fitem'); if (!it) return;
+    e.preventDefault();
+    window.ilha.dragOut(S.cfg[kind][Number(it.dataset.i)]);
+  });
+}
+$('#shelf-clear').addEventListener('click', async () => { S.cfg = await window.ilha.setCfg({ shelf: [] }); renderFiles('shelf'); });
+$('#fav-add').addEventListener('click', async () => {
+  let v = $('#fav-url').value.trim(); if (!v) return;
+  if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+  try { new URL(v); } catch (_) { toast('Endereço inválido'); return; }
+  $('#fav-url').value = ''; addFiles('favs', [v]);
+});
+$('#fav-url').addEventListener('keydown', e => { if (e.key === 'Enter') $('#fav-add').click(); });
+
+// soltar arquivos: arrastar até o topo abre a ilha na aba Atalhos
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+document.addEventListener('dragenter', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  if (dragDepth++ === 0) { document.body.classList.add('dragging'); open(); if (S.tab !== 'files') setTab('files'); }
+});
+document.addEventListener('dragleave', e => {
+  if (!hasFiles(e)) return;
+  if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); $$('.drop-over').forEach(x => x.classList.remove('drop-over')); }
+});
+document.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const card = e.target.closest('#shelf-card, #fav-card');
+  $$('#shelf-card, #fav-card').forEach(c => c.classList.toggle('drop-over', c === card));
+  e.dataTransfer.dropEffect = card ? 'copy' : 'none';
+});
+document.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0; document.body.classList.remove('dragging');
+  const card = e.target.closest('#shelf-card, #fav-card');
+  $$('.drop-over').forEach(x => x.classList.remove('drop-over'));
+  if (!card) return;
+  const paths = [...e.dataTransfer.files].map(f => window.ilha.pathOf(f));
+  addFiles(card.id === 'shelf-card' ? 'shelf' : 'favs', paths);
+});
+
 /* =================== início =================== */
 (async function init() {
   S.cfg = await window.ilha.getCfg();
@@ -632,7 +904,9 @@ $('#set-quit').addEventListener('click', () => window.ilha.quit());
   $('#notes').value = S.cfg.notes || '';
   fillSettings();
   renderClips(S.cfg.clips);
+  S.conn = await window.ilha.conn();
   renderHistory(S.cfg.speedHistory);
+  renderFiles('shelf'); renderFiles('favs');
   setGauge(0, 0);
   if (S.cfg.speedHistory?.[0]) {
     const r = S.cfg.speedHistory[0];

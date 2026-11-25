@@ -16,7 +16,7 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 // ---------- ajustes ----------
 const cfgFile = () => path.join(app.getPath('userData'), 'ilha.json');
-const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [] };
+const DEFAULTS = { city: '', glass: 22, theme: 'grafite', hideOnMax: true, startup: false, smarthouse: '', notes: '', speedHistory: [], clips: [], shFav: [], monitor: 'primary', shelf: [], favs: [], outages: [], liveAlerts: true };
 let cfg = { ...DEFAULTS };
 function loadCfg() { try { cfg = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(cfgFile(), 'utf8')) }; } catch (_) {} }
 let saveT = null;
@@ -26,9 +26,18 @@ let win, tray, helper;
 const st = { covered: false, inside: false, ignoring: true, rect: { x: (W - 200) / 2, y: 0, w: 200, h: 34 }, pinned: false };
 const send = (ch, data) => { if (win && !win.isDestroyed()) win.webContents.send(ch, data); };
 
+// monitor da ilha: o principal, ou o monitor onde o mouse está
+let curDisplay = null;
+function targetDisplay() {
+  return cfg.monitor === 'cursor' ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) : screen.getPrimaryDisplay();
+}
 function placeWindow() {
-  const b = screen.getPrimaryDisplay().bounds;
+  if (!win || win.isDestroyed()) return;
+  const d = targetDisplay(), b = d.bounds;
+  curDisplay = d.id;
   win.setBounds({ x: Math.round(b.x + (b.width - W) / 2), y: b.y, width: W, height: H });
+  // o ajudante precisa saber em qual monitor olhar a janela maximizada (em pixels físicos)
+  try { const p = screen.dipToScreenPoint({ x: Math.round(b.x + b.width / 2), y: b.y + 5 }); helperCmd(`mon ${Math.round(p.x)} ${Math.round(p.y)}`); } catch (_) {}
 }
 
 function createWindow() {
@@ -61,6 +70,11 @@ function trackCursor() {
     const ignore = !(inside && !r.edge);
     if (ignore !== st.ignoring) { st.ignoring = ignore; win.setIgnoreMouseEvents(ignore, { forward: true }); }
   }, 30);
+  // modo "monitor do mouse": quando o mouse muda de monitor (e a ilha está fechada), ela vai junto
+  setInterval(() => {
+    if (cfg.monitor !== 'cursor' || st.inside || !win || win.isDestroyed()) return;
+    if (screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id !== curDisplay) placeWindow();
+  }, 400);
   // outras janelas "sempre por cima" podem passar na frente: reafirma de tempos em tempos
   setInterval(() => { if (win && !win.isDestroyed()) { win.setAlwaysOnTop(true, 'screen-saver'); if (!st.inside) win.moveTop(); } }, 2500);
 }
@@ -78,12 +92,73 @@ function startHelper() {
       if (!line.startsWith('{')) continue;
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
       if (m.t === 'fg') { st.covered = m.covered; send('covered', cfg.hideOnMax && m.covered); }
+      else if (m.t === 'ready') { placeWindow(); send('native', m); }
       else send('native', m);
     }
   });
   helper.on('exit', () => { helper = null; if (!app.isQuitting) setTimeout(startHelper, 3000); });
 }
 const helperCmd = c => { try { helper?.stdin.write(c + '\n'); } catch (_) {} };
+
+// ---------- monitor de quedas da internet ----------
+const conn = { online: true, fails: 0, since: Date.now() };
+async function connLoop() {
+  let ok = false;
+  try { const r = await fetch('https://cp.cloudflare.com/generate_204', { signal: AbortSignal.timeout(3500), cache: 'no-store' }); ok = r.status === 204 || r.ok; } catch (_) {}
+  if (!ok) {
+    // confirma por outro caminho antes de declarar queda
+    try { const r = await fetch('https://www.google.com/generate_204', { signal: AbortSignal.timeout(3500), cache: 'no-store' }); ok = r.status === 204 || r.ok; } catch (_) {}
+  }
+  if (ok) {
+    conn.fails = 0;
+    if (!conn.online) {
+      const o = cfg.outages[0]; if (o && !o.end) o.end = Date.now();
+      conn.online = true; conn.since = Date.now(); saveCfg();
+      send('conn', { online: true, outages: cfg.outages, event: 'up', duration: o ? o.end - o.start : 0 });
+    }
+  } else if (++conn.fails >= 2 && conn.online) {
+    conn.online = false; conn.since = Date.now();
+    cfg.outages = [{ start: Date.now() - 5000, end: 0 }, ...cfg.outages].slice(0, 60); saveCfg();
+    send('conn', { online: false, outages: cfg.outages, event: 'down' });
+  }
+  setTimeout(connLoop, conn.online ? 5000 : 2500);
+}
+
+// ---------- SmartHouse ao vivo: regras que dispararam e erros viram avisos na ilha ----------
+let shStream = null;
+async function shEvents() {
+  shStream?.abort(); shStream = null;
+  let t; try { t = shTarget(); } catch (_) { t = null; }
+  if (!t) return setTimeout(shEvents, 30000);
+  const ctrl = new AbortController(); shStream = ctrl;
+  try {
+    const r = await fetch(`${t.base}/api/events?k=${encodeURIComponent(t.key)}`, { signal: ctrl.signal, headers: { accept: 'text/event-stream' } });
+    if (!r.ok) throw new Error(String(r.status));
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { done, value } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = /^event: (.+)$/m.exec(block)?.[1], data = /^data: (.+)$/m.exec(block)?.[1];
+        if (ev !== 'log' || !data) continue;
+        let l; try { l = JSON.parse(data); } catch (_) { continue; }
+        if (/^Regra /.test(l.msg) || l.level === 'error') send('shlog', l);
+      }
+    }
+  } catch (_) {}
+  if (shStream === ctrl) setTimeout(shEvents, 15000);
+}
+
+// ---------- arquivos: ícones, abrir e arrastar para fora ----------
+async function fileInfo(p) {
+  let isDir = false, exists = true;
+  try { isDir = fs.statSync(p).isDirectory(); } catch (_) { exists = false; }
+  let icon = '';
+  try { icon = (await app.getFileIcon(p, { size: 'large' })).toDataURL(); } catch (_) {}
+  return { path: p, name: path.basename(p).replace(/\.lnk$/i, '') || p, isDir, exists, icon };
+}
 
 // ---------- sistema (CPU e memória) ----------
 let prevCpu = null;
@@ -271,9 +346,21 @@ function setupIpc() {
     Object.assign(cfg, patch); saveCfg();
     if ('startup' in patch) app.setLoginItemSettings({ openAtLogin: !!patch.startup, args: app.isPackaged ? [] : [path.resolve(__dirname)] });
     if ('hideOnMax' in patch) send('covered', cfg.hideOnMax && st.covered);
+    if ('monitor' in patch) placeWindow();
+    if ('smarthouse' in patch) shEvents();
     return cfg;
   });
-  ipcMain.on('media', (_, c) => helperCmd(c));
+  // só repassa comandos conhecidos ao ajudante
+  ipcMain.on('media', (_, c) => { if (/^(play|next|prev|mute|vup|vdown|setvol [01](\.\d+)?|seek \d+(\.\d+)?)$/.test(String(c))) helperCmd(c); });
+  ipcMain.handle('fileinfo', (_, paths) => Promise.all((paths || []).slice(0, 50).map(p => fileInfo(String(p)))));
+  ipcMain.on('openpath', (_, p) => { p = String(p); if (/^https?:\/\//.test(p)) shell.openExternal(p); else shell.openPath(p); });
+  ipcMain.on('reveal', (_, p) => shell.showItemInFolder(String(p)));
+  ipcMain.on('dragout', async (e, p) => {
+    p = String(p); if (!fs.existsSync(p)) return;
+    let icon; try { icon = await app.getFileIcon(p, { size: 'normal' }); } catch (_) { icon = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'icon.png')); }
+    e.sender.startDrag({ file: p, icon });
+  });
+  ipcMain.handle('conn', () => ({ online: conn.online, since: conn.since, outages: cfg.outages }));
   ipcMain.on('disk', () => helperCmd('disk'));
   ipcMain.on('speedtest:start', () => speedtest());
   ipcMain.on('speedtest:cancel', () => stCtrl?.abort());
@@ -305,6 +392,8 @@ function setupTray() {
 
 app.whenReady().then(() => {
   loadCfg();
+  // versão instalada: regrava o "iniciar com o Windows" apontando para o .exe instalado
+  if (app.isPackaged && cfg.startup) app.setLoginItemSettings({ openAtLogin: true });
   createWindow();
   setupIpc();
   trackCursor();
@@ -312,6 +401,8 @@ app.whenReady().then(() => {
   sysLoop();
   clipLoop();
   setupTray();
+  connLoop();
+  shEvents();
   globalShortcut.register('Control+Alt+Space', () => send('toggle'));
   screen.on('display-metrics-changed', placeWindow);
   screen.on('display-added', placeWindow);

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = ch => cb => ipcRenderer.on(ch, (_, d) => cb(d));
 contextBridge.exposeInMainWorld('ilha', {
@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('ilha', {
   meta: () => ipcRenderer.invoke('meta'),
   open: url => ipcRenderer.send('open', url),
   quit: () => ipcRenderer.send('quit'),
+  pathOf: file => { try { return webUtils.getPathForFile(file); } catch (_) { return ''; } },
+  fileInfo: paths => ipcRenderer.invoke('fileinfo', paths),
+  openPath: p => ipcRenderer.send('openpath', p),
+  reveal: p => ipcRenderer.send('reveal', p),
+  dragOut: p => ipcRenderer.send('dragout', p),
+  conn: () => ipcRenderer.invoke('conn'),
+  onConn: on('conn'), onShLog: on('shlog'),
   onHover: on('hover'), onCovered: on('covered'), onNative: on('native'), onSys: on('sys'),
   onSpeed: on('speedtest'), onClips: on('clips'), onToggle: on('toggle'), onBlur: on('blur'), onCfg: on('cfg'),
 });
