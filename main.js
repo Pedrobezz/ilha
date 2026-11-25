@@ -84,6 +84,7 @@ function trackCursor() {
 }
 
 // ---------- ajudante nativo (PowerShell + C#) ----------
+const nativeLast = {}; // último valor de cada tipo, para a interface saber o estado ao (re)carregar
 function startHelper() {
   const script = path.join(__dirname, 'helper.ps1').replace('app.asar', 'app.asar.unpacked');
   helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-SelfPid', String(process.pid)], { windowsHide: true });
@@ -95,8 +96,9 @@ function startHelper() {
       const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
       if (!line.startsWith('{')) continue;
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
+      if (['vol', 'av', 'media', 'radios', 'notifAccess'].includes(m.t)) nativeLast[m.t] = m;
       if (m.t === 'fg') { st.covered = m.covered; send('covered', cfg.hideOnMax && m.covered); }
-      else if (m.t === 'ready') { placeWindow(); send('native', m); }
+      else if (m.t === 'ready') { placeWindow(); helperCmd(`notifs ${cfg.winNotifs !== false ? 1 : 0}`); send('native', m); }
       else send('native', m);
     }
   });
@@ -775,6 +777,92 @@ async function shCall({ method = 'GET', route, body }) {
   return j;
 }
 
+// ---------- atualização automática (GitHub Releases) ----------
+// Procura 30 s depois de abrir e a cada 6 h. Baixa sozinha; instala ao reiniciar (pelo botão) ou ao sair.
+const upd = { state: app.isPackaged ? 'idle' : 'dev', version: '', progress: 0, error: '', at: 0 };
+let updater = null;
+const updSend = () => send('update', upd);
+function setupUpdater() {
+  if (!app.isPackaged) return;
+  try { ({ autoUpdater: updater } = require('electron-updater')); } catch (_) { upd.state = 'error'; upd.error = 'Atualizador indisponível'; return; }
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.logger = null;
+  let lastPct = -1;
+  updater.on('checking-for-update', () => { if (upd.state !== 'ready') { upd.state = 'checking'; updSend(); } });
+  updater.on('update-available', i => { upd.state = 'downloading'; upd.version = i.version; upd.progress = 0; updSend(); });
+  updater.on('update-not-available', () => { upd.state = 'latest'; upd.at = Date.now(); updSend(); });
+  updater.on('download-progress', p => { const pct = Math.floor(p.percent || 0); if (pct !== lastPct) { lastPct = pct; upd.progress = pct; updSend(); } });
+  updater.on('update-downloaded', i => { upd.state = 'ready'; upd.version = i.version; upd.progress = 100; updSend(); });
+  updater.on('error', e => { if (upd.state === 'ready') return; upd.state = 'error'; upd.error = String(e?.message || e).split('\n')[0].slice(0, 160); upd.at = Date.now(); updSend(); });
+  const check = () => { if (upd.state !== 'ready' && upd.state !== 'downloading') updater.checkForUpdates().catch(() => {}); };
+  setTimeout(check, 30000);
+  setInterval(check, 6 * 3600e3);
+  ipcMain.on('update:check', check);
+}
+
+// ---------- notificações do Windows: abrir o app que mandou ----------
+function openApp(aumid) {
+  aumid = String(aumid || '');
+  if (!/^[^"\r\n<>|]{1,300}$/.test(aumid)) return;
+  require('child_process').execFile('explorer.exe', ['shell:AppsFolder\\' + aumid], { windowsHide: true }, () => {});
+}
+
+// ---------- barra de comandos: apps do menu Iniciar, ícones e câmbio ----------
+const apps = { list: null, at: 0, loading: null, icons: new Map() };
+function lnkIndex() {
+  // atalhos do menu Iniciar (para pegar os ícones dos apps comuns)
+  const roots = [path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')];
+  const map = new Map();
+  const walk = (dir, depth) => {
+    let ents = []; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory() && depth < 3) walk(p, depth + 1);
+      else if (/\.lnk$/i.test(e.name)) { const k = e.name.replace(/\.lnk$/i, '').toLowerCase(); if (!map.has(k)) map.set(k, p); }
+    }
+  };
+  for (const r of roots) walk(r, 0);
+  return map;
+}
+function loadApps() {
+  if (apps.list && Date.now() - apps.at < 10 * 60e3) return Promise.resolve(apps.list);
+  if (apps.loading) return apps.loading;
+  apps.loading = new Promise(resolve => {
+    require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress'], { windowsHide: true, timeout: 20000, maxBuffer: 8e6 }, (err, out) => {
+      let list = []; try { list = JSON.parse(String(out).trim() || '[]'); if (!Array.isArray(list)) list = [list]; } catch (_) {}
+      const lnk = lnkIndex(), seen = new Set();
+      apps.list = list.filter(a => a && a.Name && a.AppID && !/^(uninstall|desinstalar)\b/i.test(a.Name)).filter(a => { const k = a.Name.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+        .map(a => ({ name: String(a.Name), aumid: String(a.AppID), lnk: lnk.get(String(a.Name).toLowerCase()) || '' }));
+      apps.at = Date.now(); apps.loading = null; resolve(apps.list);
+    });
+  });
+  return apps.loading;
+}
+async function appIcon(a) {
+  const key = a.lnk || a.aumid;
+  if (apps.icons.has(key)) return apps.icons.get(key);
+  let icon = '';
+  try { if (a.lnk) icon = (await app.getFileIcon(a.lnk, { size: 'normal' })).toDataURL(); } catch (_) {}
+  apps.icons.set(key, icon);
+  return icon;
+}
+const fx = new Map(); // cotação por moeda de origem, guardada por 1 h
+async function fxRate(from, to) {
+  from = String(from).toUpperCase(); to = String(to).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) throw new Error('moeda');
+  if (from === to) return { rate: 1, date: '' };
+  let c = fx.get(from);
+  if (!c || Date.now() - c.at > 3600e3) {
+    const r = await fetch(`https://api.frankfurter.dev/v1/latest?base=${from}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    c = { at: Date.now(), rates: j.rates || {}, date: j.date || '' }; fx.set(from, c);
+  }
+  if (typeof c.rates[to] !== 'number') throw new Error('Moeda não encontrada');
+  return { rate: c.rates[to], date: c.date };
+}
+
 // ---------- IPC ----------
 function setupIpc() {
   ipcMain.on('rect', (_, r) => { st.rect = r; });
@@ -791,6 +879,7 @@ function setupIpc() {
     if ('monitor' in patch) placeWindow();
     if ('smarthouse' in patch) shEvents();
     if ('icsUrl' in patch) agendaLoop();
+    if ('winNotifs' in patch) helperCmd(`notifs ${cfg.winNotifs !== false ? 1 : 0}`);
     return cfg;
   });
   // só repassa comandos conhecidos ao ajudante
@@ -801,7 +890,7 @@ function setupIpc() {
   ipcMain.on('print', () => takePrint());
   ipcMain.handle('agenda', () => agenda);
   // painéis do Windows: lista de redes Wi-Fi (o mesmo da barra de tarefas) e dispositivos Bluetooth
-  ipcMain.on('opensys', (_, what) => { const u = { wifi: 'ms-availablenetworks:', bt: 'ms-settings:bluetooth' }[what]; if (u) shell.openExternal(u); });
+  ipcMain.on('opensys', (_, what) => { const u = { wifi: 'ms-availablenetworks:', bt: 'ms-settings:bluetooth', notifs: 'ms-settings:privacy-notifications' }[what]; if (u) shell.openExternal(u); });
   ipcMain.handle('fileinfo', (_, paths) => Promise.all((paths || []).slice(0, 50).map(p => fileInfo(String(p)))));
   ipcMain.on('openpath', (_, p) => { p = String(p); if (/^https?:\/\//.test(p)) shell.openExternal(p); else shell.openPath(p); });
   ipcMain.on('reveal', (_, p) => shell.showItemInFolder(String(p)));
@@ -821,6 +910,18 @@ function setupIpc() {
   ipcMain.handle('meta', async () => { try { return await geo(); } catch (_) { return null; } });
   ipcMain.on('open', (_, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
   ipcMain.on('quit', () => app.quit());
+  // atualização
+  ipcMain.handle('update:get', () => upd);
+  ipcMain.handle('native:last', () => Object.values(nativeLast));
+  ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { app.isQuitting = true; updater.quitAndInstall(true, true); } });
+  // notificações do Windows
+  ipcMain.on('openapp', (_, aumid) => openApp(aumid));
+  // barra de comandos
+  ipcMain.handle('apps:list', async () => (await loadApps()).map(a => ({ name: a.name, aumid: a.aumid, hasIcon: !!a.lnk })));
+  ipcMain.handle('apps:icon', async (_, aumid) => { const a = (apps.list || []).find(x => x.aumid === aumid); return a ? appIcon(a) : ''; });
+  ipcMain.on('apps:launch', (_, aumid) => { if ((apps.list || []).some(x => x.aumid === aumid)) openApp(aumid); });
+  ipcMain.handle('fx', (_, { from, to }) => fxRate(from, to));
+  ipcMain.on('websearch', (_, q) => { q = String(q || '').slice(0, 500); if (q.trim()) shell.openExternal('https://www.google.com/search?q=' + encodeURIComponent(q)); });
 }
 
 function setupTray() {
@@ -865,6 +966,8 @@ app.whenReady().then(() => {
   dlWatch();
   agendaLoop();
   setTimeout(ghLoop, 15000);
+  setupUpdater();
+  setTimeout(loadApps, 20000); // a lista de apps fica pronta antes da primeira busca
   globalShortcut.register('Control+Alt+P', () => takePrint());
   shEvents();
   globalShortcut.register('Control+Alt+Space', () => send('toggle'));

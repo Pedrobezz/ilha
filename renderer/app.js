@@ -2,7 +2,7 @@
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const isl = $('#island');
 const WIN_W = 900;
-const SIZES = { home: [790, 346], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 540] };
+const SIZES = { home: [790, 346], net: [770, 352], sys: [770, 360], casa: [800, 384], tools: [770, 332], files: [790, 340], claude: [800, 372], set: [860, 592] };
 const FLOAT_GAP = 8; // distância do topo no estilo flutuante
 const COLLAPSED = [196, 32];
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -23,6 +23,7 @@ function activity() {
   const t = S.timer;
   if (S.notice && S.notice.until > Date.now()) return 'notice';
   if (S.volFlash && S.volFlash.until > Date.now()) return 'vol';
+  if (S.call) return 'call';
   if (t.running || (t.left < t.total && t.left > 0)) return 'timer';
   if (S.claude?.working) return 'claude';
   if (S.dl?.length) return 'download';
@@ -34,8 +35,9 @@ function activity() {
 function render() {
   let mode, size;
   if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
+  else if (S.cmd) { mode = 'command'; const n = S.cmd.items.length; size = [600, 56 + (n ? n * 46 + 10 : 0)]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'media' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'media' ? 380 : a === 'download' ? 340 : a === 'call' ? 320 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
   const walk = mode === 'compact' && activity() === 'claude' && S.cfg.mascot !== false; // mascote passeando embaixo do texto
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
@@ -62,7 +64,7 @@ function render() {
 let openT, closeT;
 function open(focus) {
   clearTimeout(closeT);
-  if (!S.open) { S.open = true; render(); onTabShown(); }
+  if (!S.open) { S.open = true; S.openedAt = Date.now(); render(); onTabShown(); }
   if (focus && !S.focused) { S.focused = true; window.ilha.focus(true); }
 }
 function close() {
@@ -78,14 +80,18 @@ window.ilha.onHover(h => {
   // escondida, precisa "encostar" um instante na borda: uma passada rápida para clicar numa aba não abre
   // com a música na ilha compacta, o mouse em cima da barra não abre o painel (dá para arrastar)
   const mediaBar = !S.open && S.mode === 'compact' && activity() === 'media';
-  if (h) { if (S.alert) return; openT = setTimeout(() => { if (!S.onBar) open(); }, S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : mediaBar ? 380 : 70); }
-  else if (S.open && !S.focused) closeT = setTimeout(close, 380);
+  if (h) { if (S.alert || S.cmd || S.gesture) return; openT = setTimeout(() => { if (!S.onBar && !S.gesture) open(); }, S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : mediaBar ? 380 : 70); }
+  else { S.gesture = false; if (S.open && !S.focused) closeT = setTimeout(close, 380); }
 });
-window.ilha.onBlur(() => { if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });
-window.ilha.onToggle(() => (S.open ? close() : open(true)));
+window.ilha.onBlur(() => { if (S.cmd) closeCmd(); if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });
+window.ilha.onToggle(() => (S.cmd ? closeCmd() : S.open ? close() : open(true)));
 window.ilha.onCovered(c => { S.covered = c; render(); });
 window.ilha.onCfg(c => { S.cfg = { ...S.cfg, ...c }; fillSettings(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (S.cmd) closeCmd(); else close(); return; }
+  // com a ilha aberta pelo atalho, começar a digitar abre a barra de comandos
+  if (S.open && S.focused && !S.cmd && e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.target.closest('input, textarea, select')) { e.preventDefault(); openCmd(e.key); }
+});
 
 // campos de texto: a janela só pega o foco quando precisa digitar
 document.addEventListener('mousedown', e => {
@@ -136,6 +142,7 @@ let alertT;
 // alerta grande: título, texto, detalhe (em fonte de código) e botões. Cada botão fecha o alerta e roda sua ação.
 function showAlert(title, body, icon, opts = {}) {
   S.alert = { title, body, id: opts.id || null, size: opts.size || [opts.code ? 520 : opts.buttons?.length > 1 ? 470 : 400, opts.code ? 104 : 84] };
+  $('#alert').className = opts.cls || '';
   $('#alert .a-text b').textContent = title;
   const span = $('#alert .a-text span');
   span.textContent = body;
@@ -431,6 +438,7 @@ function renderCompact() {
     return;
   }
   if (a === 'download') return renderDownload(L, R);
+  if (a === 'call') return renderCall(L, R);
   if (a === 'timer') {
     if (L.dataset.k !== 'timer') { L.innerHTML = `<span class="c-ico" style="background:rgba(255,159,10,.22);color:#ff9f0a">${IC.timer}</span><span style="color:#ff9f0a">${S.timer.running ? 'Foco' : 'Pausado'}</span>`; L.dataset.k = 'timer'; }
     L.lastChild.textContent = S.timer.running ? 'Foco' : 'Pausado';
@@ -483,11 +491,13 @@ window.ilha.onSys(s => {
   $('#s-host').textContent = s.host; $('#s-ip').textContent = s.ip || '–'; $('#s-up').textContent = fmtUptime(s.uptime); $('#s-cores').textContent = s.cores;
   spark('sp-cpu', hist.cpu, 100); spark('sp-mem', hist.mem, 100);
 });
-window.ilha.onNative(m => {
+function handleNative(m) {
   if (m.t === 'media') setMedia(m);
   else if (m.t === 'vol') onVol(m);
   else if (m.t === 'radios') onRadios(m);
   else if (m.t === 'av') onAv(m);
+  else if (m.t === 'notif') onNotif(m);
+  else if (m.t === 'notifAccess') onNotifAccess(m.status);
   else if (m.t === 'bright') onBright(m);
   else if (m.t === 'net') {
     push(hist.down, m.down); push(hist.up, m.up);
@@ -501,7 +511,8 @@ window.ilha.onNative(m => {
   } else if (m.t === 'disk') {
     $('#disks').innerHTML = (m.drives || []).slice(0, 3).map(d => `<div class="disk"><div><b>Disco ${esc(d.name)}:</b><span>${fmtBytes(d.total - d.used)} livres</span></div><div class="bar-t"><i style="width:${(100 * d.used / d.total).toFixed(1)}%"></i></div></div>`).join('');
   }
-});
+}
+window.ilha.onNative(handleNative);
 async function initBattery() {
   try {
     const b = await navigator.getBattery();
@@ -658,6 +669,7 @@ function claudeMsg(m) {
   return m || 'Precisa de você';
 }
 window.ilha.onClaude(c => {
+  S.claudeEvAt = Date.now(); // a notificação do Windows do app do Claude que vier junto não repete o aviso
   if (S.cfg.liveAlerts === false) return;
   const where = c.project ? ` · ${c.project}` : '';
   if (c.event === 'Stop') { claudeCelebrate(c.project); softChime(); return; }
@@ -960,6 +972,9 @@ function fillSettings() {
   $('#set-sounds').checked = S.cfg.sounds !== false;
   $('#set-lwx').checked = S.cfg.liveWeather !== false;
   $('#set-confetti').checked = S.cfg.confetti !== false;
+  $('#set-notifs').checked = S.cfg.winNotifs !== false;
+  $('#set-gestures').checked = S.cfg.gestures !== false;
+  renderNotifMuted();
 }
 // estilo da ilha fechada: notch ou flutuante, preta ou do tema, e a opacidade
 function applyIAlpha(v) {
@@ -1174,7 +1189,10 @@ $('#av-chips').addEventListener('click', e => { if (e.target.closest('[data-micm
 function onAv(m) {
   const prev = S.av || { mic: [], cam: [] };
   S.av = m; renderAv();
-  if (m.cam.length && !prev.cam.length) notice('cam', '#30d158', 'Câmera em uso', appLabel(m.cam[0]), 3500);
+  if (m.first) { onCallAv(m); return; } // estado ao carregar: sem avisos
+  const inCall = onCallAv(m); // chamada (Teams, Discord, Meet…) vira atividade ao vivo no lugar do aviso
+  if (inCall) { if (activity() === 'call' && !S.open) renderCompact(); }
+  else if (m.cam.length && !prev.cam.length) notice('cam', '#30d158', 'Câmera em uso', appLabel(m.cam[0]), 3500);
   else if (m.mic.length && !prev.mic.length) notice('mic', '#ff9f0a', 'Microfone em uso', appLabel(m.mic[0]), 3500);
   if (prev.micMuted !== undefined && prev.micMuted !== m.micMuted && m.mic.length) notice('mic', m.micMuted ? '#ff453a' : '#ff9f0a', m.micMuted ? 'Microfone silenciado' : 'Microfone ativado', appLabel(m.mic[0]), 2500);
 }
@@ -1496,6 +1514,415 @@ for (const [id, key] of [['set-breathe', 'breathe'], ['set-sounds', 'sounds'], [
   $('#' + id).addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ [key]: e.target.checked }); render(); });
 }
 
+/* =================== versão 1.8 =================== */
+const IC3 = {
+  phone: '<svg viewBox="0 0 24 24"><path d="M5 4h3.5l1.8 4.5-2.3 1.4a11 11 0 0 0 6.1 6.1l1.4-2.3L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5A16.5 16.5 0 0 1 3.5 5.6 1.5 1.5 0 0 1 5 4z" fill="currentColor" stroke="none"/></svg>',
+  update: '<svg viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5"/><path d="M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2"/></svg>',
+  bell: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>',
+  calc: '<svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h1M12 12h0M15.5 12h0M8.5 16h1M12 16h0M15.5 16h0" stroke-width="2.2"/></svg>',
+  swap: '<svg viewBox="0 0 24 24"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></svg>',
+  globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+  bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>',
+};
+NOTE_IC.phone = IC3.phone;
+// espera a ilha ficar livre (painel fechado e sem outro alerta) para mostrar algo
+function whenIdle(fn, tries = 0) { if ((S.open || S.alert || S.cmd) && tries < 720) return setTimeout(() => whenIdle(fn, tries + 1), 4000); fn(); }
+
+/* ---- atualização automática ---- */
+function renderUpdate(u) {
+  S.upd = u;
+  const txt = {
+    dev: 'Só na versão instalada', idle: '', checking: 'Procurando…', latest: 'Você está na versão mais recente',
+    downloading: `Baixando a ${u.version}… ${u.progress || 0}%`, ready: `Versão ${u.version} pronta`, error: 'Não consegui procurar agora',
+  }[u.state] || '';
+  const st = $('#upd-status'); st.textContent = txt; st.title = u.error || '';
+  const b = $('#upd-btn');
+  b.textContent = u.state === 'ready' ? 'Reiniciar' : 'Procurar';
+  b.disabled = ['dev', 'checking', 'downloading'].includes(u.state);
+  b.classList.toggle('go', u.state === 'ready');
+}
+window.ilha.onUpdate(u => {
+  const was = S.upd?.state;
+  renderUpdate(u);
+  if (u.state === 'ready' && was !== 'ready') {
+    whenIdle(() => showAlert('Atualização pronta', `Ilha ${u.version} já foi baixada. Reinicie para usar.`, `<span class="a-ico-blue">${IC3.update}</span>`, {
+      ms: 20000, buttons: [{ label: 'Depois' }, { label: 'Reiniciar', cls: 'blue', fn: () => window.ilha.updateInstall() }],
+    }));
+  }
+});
+$('#upd-btn').addEventListener('click', () => { if (S.upd?.state === 'ready') window.ilha.updateInstall(); else { window.ilha.updateCheck(); renderUpdate({ ...S.upd, state: 'checking' }); } });
+
+/* ---- notificações do Windows na ilha ---- */
+const notifQ = [];
+function notifKey(n) { return n.aumid || n.app; }
+function onNotif(n) {
+  if (S.cfg.winNotifs === false) return;
+  if (/^(ilha|electron)$/i.test(n.app) || /pedrobez\.ilha/i.test(n.aumid)) return;
+  if ((S.cfg.notifMuted || []).some(m => m.key === notifKey(n))) return;
+  // o Claude Code já avisa pela própria ilha: não repete a notificação do app do Claude
+  if (/^claude$/i.test(n.app) && Date.now() - (S.claudeEvAt || 0) < 15000) return;
+  notifQ.push({ ...n, at: Date.now() });
+  if (notifQ.length > 6) notifQ.shift();
+  pumpNotif();
+}
+function pumpNotif() {
+  clearTimeout(pumpNotif.t);
+  while (notifQ.length && Date.now() - notifQ[0].at > 120000) notifQ.shift(); // velhas demais: descarta
+  if (!notifQ.length) return;
+  // não interrompe quem está usando o painel, a barra de comandos ou outro alerta: mostra quando liberar
+  if (S.open || S.cmd || S.alert) { pumpNotif.t = setTimeout(pumpNotif, 1500); return; }
+  const n = notifQ.shift();
+  const icon = n.icon ? `<img class="a-appicon" src="${n.icon}" alt="">` : `<span class="a-ico-blue">${IC3.bell}</span>`;
+  const title = n.app && n.title !== n.app ? `${n.app} · ${n.title}` : n.title;
+  uiSound('notice');
+  showAlert(title, n.body || '', icon, {
+    id: 'notif:' + n.id, cls: 'notif', size: [520, n.body ? 92 : 76], ms: 7000,
+    buttons: [
+      { label: 'Silenciar', fn: () => muteNotifApp(n) },
+      ...(n.aumid ? [{ label: 'Abrir', cls: 'blue', fn: () => window.ilha.openApp(n.aumid) }] : []),
+    ],
+  });
+}
+// quando um alerta fecha (botão ou tempo), a próxima notificação da fila aparece
+const _dismissAlert = dismissAlert;
+dismissAlert = function () { _dismissAlert(); if (notifQ.length) { clearTimeout(pumpNotif.t); pumpNotif.t = setTimeout(pumpNotif, 450); } };
+async function muteNotifApp(n) {
+  const list = [...(S.cfg.notifMuted || []).filter(m => m.key !== notifKey(n)), { key: notifKey(n), name: n.app || 'App' }];
+  S.cfg = await window.ilha.setCfg({ notifMuted: list });
+  renderNotifMuted();
+  toast(`${n.app || 'App'} não aparece mais na ilha`);
+}
+function renderNotifMuted() {
+  const el = $('#notif-sub'); if (!el) return;
+  const list = S.cfg.notifMuted || [];
+  if (S.notifAccess && S.notifAccess !== 'Allowed' && S.cfg.winNotifs !== false) { el.innerHTML = '<button data-fix>Permitir no Windows</button>'; return; }
+  el.innerHTML = list.length ? `${list.length} silenciado${list.length > 1 ? 's' : ''} · <button data-unmute title="${esc(list.map(m => m.name).join(', '))}">Mostrar de novo</button>` : 'WhatsApp, Discord, e-mail…';
+}
+$('#notif-sub').addEventListener('click', async e => {
+  if (e.target.closest('[data-unmute]')) { S.cfg = await window.ilha.setCfg({ notifMuted: [] }); renderNotifMuted(); toast('Todos os apps aparecem de novo'); }
+  if (e.target.closest('[data-fix]')) window.ilha.openSys('notifs');
+});
+function onNotifAccess(status) {
+  S.notifAccess = status; renderNotifMuted();
+  if (status !== 'Allowed' && S.cfg.winNotifs !== false) toast('Permita o acesso às notificações nas Configurações do Windows');
+}
+$('#set-notifs').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ winNotifs: e.target.checked }); renderNotifMuted(); toast(e.target.checked ? 'As notificações do Windows vão aparecer na ilha' : 'Notificações do Windows desligadas'); });
+
+/* ---- em chamada: Teams, Discord, Zoom, Meet… ---- */
+const CALL_APPS = { 'ms-teams.exe': 'Teams', 'teams.exe': 'Teams', 'discord.exe': 'Discord', 'zoom.exe': 'Zoom', 'slack.exe': 'Slack', 'whatsapp.exe': 'WhatsApp', 'whatsapp.root.exe': 'WhatsApp', 'skype.exe': 'Skype', 'telegram.exe': 'Telegram', 'webex.exe': 'Webex', 'ciscocollabhost.exe': 'Webex', 'signal.exe': 'Signal' };
+const BROWSER_EXE = /^(chrome|msedge|firefox|brave|opera|vivaldi|arc)\.exe$/i;
+function meetingNow() {
+  const now = Date.now();
+  const e = (S.agenda?.events || []).find(x => x.link && x.start - 10 * 60e3 <= now && x.end >= now);
+  if (!e) return '';
+  return /meet\.google/.test(e.link) ? 'Google Meet' : /zoom\.us/.test(e.link) ? 'Zoom' : /teams\./.test(e.link) ? 'Teams' : 'Reunião';
+}
+function callLabel(mic) {
+  for (const a of mic) { const l = CALL_APPS[String(a).toLowerCase()]; if (l) return l; }
+  const br = mic.find(a => BROWSER_EXE.test(a));
+  return br ? (meetingNow() || `Chamada · ${appLabel(br)}`) : '';
+}
+// devolve true se está em chamada
+function onCallAv(m) {
+  const label = callLabel(m.mic || []);
+  if (label) {
+    clearTimeout(S.callEndT); S.callEndT = 0;
+    if (!S.call) { S.call = { app: label, start: Date.now() }; uiSound('notice'); render(); }
+    else S.call.app = label;
+    return true;
+  }
+  // o microfone pode piscar por um instante: só encerra depois de 4 s sem ele
+  if (S.call && !S.callEndT) S.callEndT = setTimeout(() => {
+    const c = S.call; S.call = null; S.callEndT = 0;
+    if (c && Date.now() - c.start > 15000) notice('phone', '#30d158', 'Chamada encerrada', `${c.app} · ${fmtDur(Date.now() - c.start)}`, 3500);
+    render();
+  }, 4000);
+  return !!S.call;
+}
+function renderCall(L, R) {
+  const c = S.call, muted = !!S.av?.micMuted;
+  if (L.dataset.k !== 'call') { L.innerHTML = `<span class="c-ico call-ico">${IC3.phone}</span><span class="c-note" style="color:#30d158;max-width:160px"></span>`; L.dataset.k = 'call'; }
+  L.lastChild.textContent = c.app;
+  if (R.dataset.k !== 'call') {
+    R.innerHTML = '<button class="c-btn" id="call-mic"></button><b style="color:#30d158;min-width:38px;text-align:right" id="call-t"></b>';
+    R.dataset.k = 'call';
+    const b = $('#call-mic');
+    // em cima do botão, a ilha não abre (dá para silenciar sem abrir o painel)
+    b.addEventListener('pointerenter', () => { S.onBar = true; clearTimeout(openT); });
+    b.addEventListener('pointerleave', () => { S.onBar = false; if (S.hover && !S.open) { clearTimeout(openT); openT = setTimeout(() => { if (!S.onBar && !S.gesture) open(); }, 450); } });
+    b.addEventListener('click', e => { e.stopPropagation(); window.ilha.media('micmute'); });
+  }
+  const b = $('#call-mic');
+  b.innerHTML = muted ? IC2.micOff : IC2.mic; b.classList.toggle('muted', muted); b.title = muted ? 'Ativar o microfone' : 'Silenciar o microfone';
+  $('#call-t').textContent = fmtT((Date.now() - c.start) / 1000);
+}
+setInterval(() => { if (S.call && S.mode === 'compact' && activity() === 'call') renderCompact(); }, 1000);
+
+/* ---- gestos na ilha fechada: rolar = volume, rolar de lado (ou Shift+rolar) = faixa, botão do meio = pausar ---- */
+let gVolAt = 0, gVol = 0, swipeAcc = 0, swipeAt = 0;
+isl.addEventListener('wheel', e => {
+  if (S.cfg.gestures === false || S.alert || S.cmd) return;
+  // a ilha abre quase na hora ao passar o mouse: rolar logo em seguida ainda conta como gesto
+  const fresh = S.open && !S.focused && Date.now() - (S.openedAt || 0) < 700;
+  if (S.open && !fresh) return;
+  e.preventDefault();
+  S.gesture = true; clearTimeout(openT);
+  if (S.open) close();
+  const horiz = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+  if (horiz) {
+    if (!S.media?.has) return;
+    swipeAcc += e.deltaX;
+    if (Math.abs(swipeAcc) >= 90 && Date.now() - swipeAt > 650) {
+      const next = swipeAcc > 0; swipeAcc = 0; swipeAt = Date.now();
+      window.ilha.media(next ? 'next' : 'prev');
+      notice('note', '#ff6482', next ? 'Próxima' : 'Anterior', S.media?.title || '', 1400);
+    }
+    return;
+  }
+  if (!S.vol) return;
+  if (Date.now() - gVolAt > 900) gVol = S.vol.muted ? 0 : S.vol.level;
+  gVolAt = Date.now();
+  gVol = clamp(gVol - e.deltaY / 2000, 0, 1); // um "clique" da rodinha = 5%
+  window.ilha.media('setvol ' + gVol.toFixed(2));
+}, { passive: false });
+isl.addEventListener('mousedown', e => { if (e.button === 1 && S.cfg.gestures !== false) e.preventDefault(); });
+isl.addEventListener('auxclick', e => {
+  if (e.button !== 1 || S.cfg.gestures === false || !S.media?.has) return;
+  e.preventDefault();
+  window.ilha.media('play');
+  S.media.pos = mediaPos(); S.media.at = Date.now(); S.media.playing = !S.media.playing; setMedia({ ...S.media, has: true });
+  if (!S.open) notice('note', '#ff6482', S.media.playing ? 'Tocando' : 'Pausado', S.media.title || '', 1400);
+});
+$('#set-gestures').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ gestures: e.target.checked }); });
+
+/* ---- barra de comandos: apps, contas, conversões, ações da ilha e pesquisa ---- */
+const cmdIn = $('#cmd-q'), cmdList = $('#cmd-list');
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+let appsCache = null, appsAt = 0;
+const appIcons = new Map();
+async function loadAppList() {
+  if (appsCache && Date.now() - appsAt < 5 * 60e3) return;
+  try { appsCache = await window.ilha.appsList(); appsAt = Date.now(); } catch (_) { appsCache = appsCache || []; }
+  if (S.cmd) cmdUpdate();
+}
+function openCmd(initial = '') {
+  clearTimeout(openT); clearTimeout(closeT);
+  S.open = false;
+  S.cmd = { items: [], sel: 0, seq: 0 };
+  $$('.forecast.show').forEach(f => f.classList.remove('show'));
+  render();
+  if (!S.focused) { S.focused = true; window.ilha.focus(true); }
+  cmdIn.value = initial;
+  setTimeout(() => { cmdIn.focus(); cmdIn.setSelectionRange(cmdIn.value.length, cmdIn.value.length); }, 30);
+  cmdUpdate();
+  loadAppList();
+}
+function closeCmd() {
+  if (!S.cmd) return;
+  S.cmd = null; cmdIn.blur(); cmdList.innerHTML = '';
+  if (S.focused) { S.focused = false; window.ilha.focus(false); }
+  render();
+}
+function fuzzy(name, q) {
+  const n = norm(name), s = q;
+  if (!s || !n) return 0;
+  if (n === s) return 100;
+  if (n.startsWith(s)) return 90 - Math.min(10, n.length / 6);
+  const words = n.split(/[\s\-_.()]+/).filter(Boolean);
+  if (words.some(w => w.startsWith(s))) return 76;
+  if (s.length >= 2 && words.map(w => w[0]).join('').startsWith(s)) return 68; // "vsc" → Visual Studio Code
+  const i = n.indexOf(s); if (i >= 0) return 58 - Math.min(10, i / 2);
+  // letras em ordem, mas perto umas das outras ("crm" acha "Chrome", "dolar" não acha "Windows Media Player")
+  if (s.length < 3) return 0;
+  let j = 0, first = -1, last = -1;
+  for (let k = 0; k < n.length && j < s.length; k++) if (n[k] === s[j]) { if (first < 0) first = k; last = k; j++; }
+  return j === s.length && last - first + 1 <= s.length * 2.5 ? 30 : 0;
+}
+const useCount = lsGet('cmdUse', {});
+const boost = key => Math.min(18, (useCount[key] || 0) * 3);
+function used(key) { useCount[key] = (useCount[key] || 0) + 1; lsSet('cmdUse', useCount); }
+
+// --- calculadora (sem eval): + - * / ^ %, parênteses, vírgula ou ponto decimal ---
+function calc(q) {
+  let s = q.replace(/\s+/g, '').replace(/[x×]/gi, '*').replace(/÷/g, '/').replace(/\*\*/g, '^');
+  if (!/^[\d.,+\-*/^%()]+$/.test(s) || !/\d/.test(s) || !/[+\-*/^%(]/.test(s.replace(/^-/, ''))) return null;
+  s = s.includes(',') ? s.replace(/\.(?=\d{3}(\D|$))/g, '').replace(/,/g, '.') : s;
+  let i = 0;
+  const peek = () => s[i], eat = c => (s[i] === c ? (i++, true) : false);
+  function num() { const m = /^\d*\.?\d+|^\d+\.?/.exec(s.slice(i)); if (!m) throw 0; i += m[0].length; return parseFloat(m[0]); }
+  function atom() {
+    if (eat('-')) return -atom();
+    if (eat('+')) return atom();
+    let v; if (eat('(')) { v = expr(); eat(')'); } else v = num();
+    while (eat('%')) v /= 100;
+    return v;
+  }
+  function pow() { const b = atom(); return eat('^') ? Math.pow(b, pow()) : b; }
+  function term() { let v = pow(); for (;;) { if (eat('*')) v *= pow(); else if (eat('/')) v /= pow(); else if (peek() === '(') v *= pow(); else return v; } }
+  // "200 + 15%" = 230 e "25 - 10%" = 22,5 (porcentagem do valor anterior, como nas calculadoras)
+  function addend() { const i0 = i, v = term(), t = s.slice(i0, i); return { v, pct: /%$/.test(t) && !/[*/^]/.test(t) }; }
+  function expr() {
+    let v = term();
+    for (;;) {
+      if (eat('+')) { const t = addend(); v = t.pct ? v * (1 + t.v) : v + t.v; }
+      else if (eat('-')) { const t = addend(); v = t.pct ? v * (1 - t.v) : v - t.v; }
+      else return v;
+    }
+  }
+  try { const v = expr(); if (i !== s.length || !isFinite(v)) return null; return v; } catch (_) { return null; }
+}
+const fmtN = v => (Math.abs(v) >= 1e15 || (Math.abs(v) < 1e-6 && v !== 0)) ? v.toExponential(6).replace('.', ',') : v.toLocaleString('pt-BR', { maximumFractionDigits: 8 });
+
+// --- conversões ---
+const UNITS = {};
+const unit = (names, kind, f, off = 0) => names.forEach(n => (UNITS[n] = { kind, f, off, label: names[0] }));
+unit(['km', 'quilometro', 'quilometros'], 'len', 1000); unit(['m', 'metro', 'metros'], 'len', 1); unit(['cm', 'centimetro', 'centimetros'], 'len', .01); unit(['mm', 'milimetro', 'milimetros'], 'len', .001);
+unit(['mi', 'milha', 'milhas'], 'len', 1609.344); unit(['ft', 'pe', 'pes'], 'len', .3048); unit(['in', 'pol', 'polegada', 'polegadas'], 'len', .0254); unit(['yd', 'jarda', 'jardas'], 'len', .9144);
+unit(['kg', 'quilo', 'quilos'], 'mass', 1); unit(['g', 'grama', 'gramas'], 'mass', .001); unit(['mg'], 'mass', 1e-6); unit(['t', 'tonelada', 'toneladas'], 'mass', 1000); unit(['lb', 'lbs', 'libra', 'libras'], 'mass', .45359237); unit(['oz', 'onca', 'oncas'], 'mass', .028349523);
+unit(['l', 'litro', 'litros'], 'vol', 1); unit(['ml'], 'vol', .001); unit(['gal', 'galao', 'galoes'], 'vol', 3.785411784); unit(['xicara', 'xicaras'], 'vol', .24);
+unit(['km/h', 'kmh'], 'spd', 1 / 3.6); unit(['m/s'], 'spd', 1); unit(['mph'], 'spd', .44704); unit(['no', 'nos', 'kn'], 'spd', .514444);
+unit(['b', 'byte', 'bytes'], 'data', 1); unit(['kb'], 'data', 1024); unit(['mb'], 'data', 1024 ** 2); unit(['gb'], 'data', 1024 ** 3); unit(['tb'], 'data', 1024 ** 4);
+unit(['s', 'seg', 'segundo', 'segundos'], 'time', 1); unit(['min', 'minuto', 'minutos'], 'time', 60); unit(['h', 'hora', 'horas'], 'time', 3600); unit(['dia', 'dias'], 'time', 86400); unit(['semana', 'semanas'], 'time', 604800);
+unit(['c', '°c', 'celsius'], 'temp', 1, 0); unit(['f', '°f', 'fahrenheit'], 'temp', 5 / 9, -32); unit(['k', 'kelvin'], 'temp', 1, -273.15);
+const CUR = { brl: 'BRL', real: 'BRL', reais: 'BRL', 'r$': 'BRL', usd: 'USD', dolar: 'USD', dolares: 'USD', $: 'USD', 'us$': 'USD', eur: 'EUR', euro: 'EUR', euros: 'EUR', '€': 'EUR', gbp: 'GBP', '£': 'GBP', jpy: 'JPY', iene: 'JPY', ienes: 'JPY', cad: 'CAD', aud: 'AUD', chf: 'CHF', cny: 'CNY', yuan: 'CNY', mxn: 'MXN', ars: 'ARS', clp: 'CLP' };
+const toBase = (v, u) => u.kind === 'temp' ? (v + u.off) * u.f : v * u.f;
+const fromBase = (v, u) => u.kind === 'temp' ? v / u.f - u.off : v / u.f;
+const parseNum = s => { s = String(s); s = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s; const v = parseFloat(s); return isFinite(v) ? v : null; };
+function convert(q) {
+  const m = /^(-?[\d.,]+)\s*([^\s\d]+(?:\/[a-z]+)?)\s*(?:(?:em|para|pra|to|in|=|->|>)\s*([^\s\d]+(?:\/[a-z]+)?))?$/.exec(q)
+    || /^([^\s\d]+)$/.exec(q) && [null, '1', q, ''];
+  if (!m) return null;
+  const v = parseNum(m[1]); if (v == null) return null;
+  const a = m[2].replace(/^°/, '°'), b = (m[3] || '').trim();
+  if (CUR[a] && (!b || CUR[b])) return { cur: true, v, from: CUR[a], to: b ? CUR[b] : CUR[a] === 'BRL' ? 'USD' : 'BRL' };
+  const ua = UNITS[a], ub = UNITS[b];
+  if (!ua || !ub || ua.kind !== ub.kind) return null;
+  return { v, r: fromBase(toBase(v, ua), ub), a: ua.label, b: ub.label };
+}
+
+// --- ações da própria ilha ---
+const TAB_NAMES = { home: ['inicio', 'home'], net: ['internet', 'rede'], sys: ['sistema', 'cpu', 'memoria'], casa: ['casa', 'smarthouse', 'luz', 'luzes'], tools: ['foco', 'timer', 'notas'], claude: ['claude'], files: ['atalhos', 'prateleira', 'favoritos'], set: ['ajustes', 'configuracoes', 'config'] };
+const TAB_LABEL = { home: 'Início', net: 'Internet', sys: 'Sistema', casa: 'Casa', tools: 'Foco', claude: 'Claude', files: 'Atalhos', set: 'Ajustes' };
+function goTab(tab) { closeCmd(); setTab(tab, true); open(true); }
+function ilhaActions(q, raw) {
+  const out = [];
+  const add = (score, title, sub, icon, run, key) => score > 0 && out.push({ score: score + boost(key), title, sub, icon, run: () => { used(key); run(); }, key });
+  // timer / pomodoro com minutos: "timer 10", "foco 45", "pomodoro"
+  const tm = /^(timer|foco|pomodoro|cronometro)\s*(\d{1,3})?\s*(m|min|minutos?)?$/.exec(q);
+  if (tm || fuzzy('pomodoro', q) >= 76) {
+    const min = Math.min(600, Math.max(1, +(tm?.[2] || 25)));
+    add(95, `Iniciar foco de ${min} min`, 'Timer na aba Foco', IC.timer, () => { closeCmd(); T.total = T.left = min * 60; T.running = true; T.endAt = Date.now() + T.left * 1000; renderTimer(); render(); toast(`Foco de ${min} min`); }, 'timer');
+  }
+  const nt = /^(nota|anotar|anota)[:\s]+(.+)$/i.exec(raw.trim());
+  if (nt) add(96, `Anotar: ${nt[2]}`, 'Vai para as notas da aba Foco', '<svg viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h4"/></svg>', async () => {
+    closeCmd(); const v = ($('#notes').value ? $('#notes').value.replace(/\s*$/, '\n') : '') + nt[2]; $('#notes').value = v; await window.ilha.setCfg({ notes: v }); toast('Anotado');
+  }, 'nota');
+  const acts = [
+    [['print', 'captura', 'recortar tela', 'screenshot'], 'Print de uma área da tela', 'Vai direto para a prateleira', IC2.shot, () => { closeCmd(); window.ilha.print(); }, 'print'],
+    [['teste de internet', 'velocidade', 'speedtest'], 'Testar a velocidade da internet', 'Aba Internet', IC.gauge, () => { goTab('net'); if (!S.speed.running) window.ilha.speedStart(); }, 'speed'],
+    [['mudo', 'silenciar som', 'mutar'], 'Silenciar o som', 'Liga ou desliga o mudo do Windows', '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>', () => { closeCmd(); window.ilha.media('mute'); }, 'mute'],
+    [['microfone', 'silenciar microfone', 'mic'], 'Silenciar o microfone', 'Liga ou desliga o microfone', IC2.mic, () => { closeCmd(); window.ilha.media('micmute'); toast(S.av?.micMuted ? 'Microfone ativado' : 'Microfone silenciado'); }, 'mic'],
+    [['wifi', 'wi-fi', 'redes'], 'Redes Wi-Fi', 'Abre a lista de redes do Windows', NOTE_IC.wifi, () => { closeCmd(); window.ilha.openSys('wifi'); }, 'wifi'],
+    [['bluetooth'], 'Bluetooth', 'Abre os dispositivos Bluetooth', '<svg viewBox="0 0 24 24"><path d="m7 7 10 10-5 4V3l5 4L7 17"/></svg>', () => { closeCmd(); window.ilha.openSys('bt'); }, 'bt'],
+    [['pausar', 'tocar', 'play', 'musica'], S.media?.playing ? 'Pausar a música' : 'Tocar a música', S.media?.title || 'Mídia do Windows', IC.note, () => { closeCmd(); window.ilha.media('play'); }, 'play'],
+    [['proxima', 'proxima musica', 'pular'], 'Próxima faixa', S.media?.title || '', IC.note, () => { closeCmd(); window.ilha.media('next'); }, 'next'],
+  ];
+  for (const [names, title, sub, icon, run, key] of acts) add(Math.max(...names.map(n => fuzzy(n, q))) - 4, title, sub, icon, run, key);
+  for (const [tab, names] of Object.entries(TAB_NAMES)) add(Math.max(...names.map(n => fuzzy(n, q))) - 8, `Abrir ${TAB_LABEL[tab]}`, 'Aba da Ilha', $(`#tabs button[data-tab="${tab}"] svg`)?.outerHTML || '', () => goTab(tab), 'tab:' + tab);
+  return out;
+}
+
+function appItem(a, score) {
+  const key = 'app:' + a.aumid;
+  const ico = appIcons.get(a.aumid);
+  return { score: score + boost(key), title: a.name, sub: 'App', key, aumid: a.aumid, hasIcon: a.hasIcon,
+    icon: ico ? `<img src="${ico}" alt="">` : `<span class="cmd-letter">${esc((a.name.match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase())}</span>`,
+    run: () => { used(key); closeCmd(); window.ilha.launch(a.aumid); } };
+}
+function favItems(q) {
+  const out = [];
+  for (const p of S.cfg.favs || []) {
+    const isUrl = /^https?:\/\//.test(p);
+    const name = isUrl ? p.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : p.split(/[\\/]/).pop().replace(/\.lnk$/i, '');
+    const sc = fuzzy(name, q); if (!sc) continue;
+    const key = 'fav:' + p, inf = fileCache.get(p), ic = isUrl ? siteIcons.get(p) : inf?.icon;
+    out.push({ score: sc + 4 + boost(key), title: name, sub: isUrl ? 'Site favorito' : 'Favorito', key, icon: ic ? `<img src="${ic}" alt="">` : isUrl ? IC3.globe : IC2.dl, run: () => { used(key); closeCmd(); window.ilha.openPath(p); } });
+  }
+  return out;
+}
+
+function cmdUpdate() {
+  if (!S.cmd) return;
+  const raw = cmdIn.value, q = norm(raw);
+  const seq = ++S.cmd.seq;
+  let items = [];
+  if (q) {
+    const v = calc(raw);
+    if (v != null) items.push({ score: 200, title: `= ${fmtN(v)}`, sub: `${raw.trim()} · Enter copia`, icon: IC3.calc, cls: 'big', run: () => { window.ilha.copy(String(+v.toPrecision(12)).replace('.', ',')); closeCmd(); toast('Resultado copiado'); } });
+    const cv = convert(q);
+    if (cv && cv.cur) {
+      const it = { score: 190, title: 'Convertendo…', sub: `Cotação ${cv.from} → ${cv.to}`, icon: IC3.swap, cls: 'big', run: () => {} };
+      items.push(it);
+      window.ilha.fx(cv.from, cv.to).then(({ rate, date }) => {
+        if (!S.cmd || S.cmd.seq !== seq) return;
+        const r = cv.v * rate, txt = r.toLocaleString('pt-BR', { style: 'currency', currency: cv.to });
+        it.title = `${cv.v.toLocaleString('pt-BR', { style: 'currency', currency: cv.from })} = ${txt}`;
+        it.sub = `Cotação do Banco Central Europeu${date ? ' · ' + date.split('-').reverse().join('/') : ''} · Enter copia`;
+        it.run = () => { window.ilha.copy(r.toFixed(2).replace('.', ',')); closeCmd(); toast('Valor copiado'); };
+        drawCmd();
+      }).catch(() => { if (!S.cmd || S.cmd.seq !== seq) return; it.title = 'Sem cotação agora'; it.sub = 'Confira a internet'; drawCmd(); });
+    } else if (cv) {
+      items.push({ score: 190, title: `${fmtN(cv.v)} ${cv.a} = ${fmtN(+cv.r.toPrecision(10))} ${cv.b}`, sub: 'Enter copia o resultado', icon: IC3.swap, cls: 'big', run: () => { window.ilha.copy(String(+cv.r.toPrecision(10)).replace('.', ',')); closeCmd(); toast('Resultado copiado'); } });
+    }
+    const pool = [...ilhaActions(q, raw), ...favItems(q)];
+    for (const a of appsCache || []) { const sc = fuzzy(a.name, q); if (sc) pool.push(appItem(a, sc)); }
+    pool.sort((x, y) => y.score - x.score);
+    items.push(...pool.slice(0, 6 - Math.min(items.length, 2) - 1));
+    if (/^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i.test(raw.trim()) && !/^\d+([.,]\d+)*$/.test(raw.trim())) {
+      const url = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : 'https://' + raw.trim();
+      items.push({ score: 0, title: `Abrir ${raw.trim()}`, sub: 'Site', icon: IC3.globe, run: () => { closeCmd(); window.ilha.open(url); } });
+    }
+    items.push({ score: -1, title: `Pesquisar “${raw.trim()}”`, sub: 'No Google', icon: IC3.search, run: () => { closeCmd(); window.ilha.webSearch(raw.trim()); } });
+  } else {
+    // vazio: sugestões rápidas (as mais usadas primeiro)
+    const top = Object.entries(useCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    for (const k of top.slice(0, 4)) {
+      if (k.startsWith('app:')) { const a = (appsCache || []).find(x => 'app:' + x.aumid === k); if (a) items.push({ ...appItem(a, 0), sub: 'Usado há pouco' }); }
+    }
+    if (!items.length) items.push({ title: 'Digite para procurar', sub: 'Apps · contas (12*3,5) · 100 usd em brl · 5 km em mi · timer 10 · nota comprar pão', icon: IC3.bolt, run: () => {} });
+  }
+  S.cmd.items = items.slice(0, 6);
+  S.cmd.sel = 0;
+  drawCmd();
+  // ícones dos apps chegam depois
+  for (const it of S.cmd.items) if (it.aumid && it.hasIcon && !appIcons.has(it.aumid)) {
+    appIcons.set(it.aumid, '');
+    window.ilha.appIcon(it.aumid).then(ic => { appIcons.set(it.aumid, ic || ''); if (ic && S.cmd) { const row = cmdList.querySelector(`[data-aumid="${CSS.escape(it.aumid)}"] .cmd-ic`); if (row) row.innerHTML = `<img src="${ic}" alt="">`; } });
+  }
+}
+function drawCmd() {
+  if (!S.cmd) return;
+  const { items, sel } = S.cmd;
+  cmdList.innerHTML = items.map((it, i) => `<button class="cmd-row${i === sel ? ' on' : ''}${it.cls ? ' ' + it.cls : ''}" data-i="${i}"${it.aumid ? ` data-aumid="${esc(it.aumid)}"` : ''}><span class="cmd-ic">${it.icon || ''}</span><span class="cmd-t"><b>${esc(it.title)}</b><small>${esc(it.sub || '')}</small></span>${i === sel ? '<kbd>Enter</kbd>' : ''}</button>`).join('');
+  render();
+}
+function cmdSel(i) {
+  if (!S.cmd || !S.cmd.items.length) return;
+  S.cmd.sel = (i + S.cmd.items.length) % S.cmd.items.length;
+  cmdList.querySelectorAll('.cmd-row').forEach((r, k) => { r.classList.toggle('on', k === S.cmd.sel); const kb = r.querySelector('kbd'); if (k === S.cmd.sel && !kb) r.insertAdjacentHTML('beforeend', '<kbd>Enter</kbd>'); else if (k !== S.cmd.sel && kb) kb.remove(); });
+}
+cmdIn.addEventListener('input', cmdUpdate);
+cmdIn.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); cmdSel(S.cmd.sel + 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); cmdSel(S.cmd.sel - 1); }
+  else if (e.key === 'Enter') { e.preventDefault(); S.cmd?.items[S.cmd.sel]?.run(); }
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCmd(); }
+});
+cmdList.addEventListener('mousemove', e => { const r = e.target.closest('.cmd-row'); if (r && +r.dataset.i !== S.cmd?.sel) cmdSel(+r.dataset.i); });
+cmdList.addEventListener('click', e => { const r = e.target.closest('.cmd-row'); if (r) S.cmd?.items[+r.dataset.i]?.run(); });
+$('#cmd-open').addEventListener('click', () => openCmd(''));
+
 /* =================== início =================== */
 (async function init() {
   S.cfg = await window.ilha.getCfg();
@@ -1510,6 +1937,9 @@ for (const [id, key] of [['set-breathe', 'breathe'], ['set-sounds', 'sounds'], [
   renderDevRings();
   S.agenda = await window.ilha.agenda(); renderAgenda();
   wallpaperTheme(true);
+  renderUpdate(await window.ilha.updateGet());
+  // últimos valores do ajudante (volume, microfone, mídia, rádios): não espera mudarem para saber
+  for (const m of await window.ilha.nativeLast()) handleNative({ ...m, first: true });
   $('#mascot-sleep').innerHTML = mascotSVG('sleep') + '<span class="zzz"><i>z</i><i>z</i><i>Z</i></span>';
   renderHistory(S.cfg.speedHistory);
   renderFiles('shelf'); renderFiles('favs');

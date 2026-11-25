@@ -309,6 +309,57 @@ function Get-Av {
   Out-J @{ t = 'av'; mic = @($mic -split ';' | Where-Object { $_ }); cam = @($cam -split ';' | Where-Object { $_ }); micMuted = ($mm -eq 1); hasMic = ($mm -ge 0) }
 }
 
+# ---- notificações do Windows (UserNotificationListener): só lê enquanto o ajuste estiver ligado ----
+$notifOn = $false; $notifL = $null; $notifSeen = @{}; $notifIcons = @{}; $notifPrimed = $false; $notifAccess = ''
+function Init-Notifs {
+  if ($script:notifL -or -not $asTaskGeneric) { return }
+  try {
+    [void][Windows.UI.Notifications.Management.UserNotificationListener, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    [void][Windows.UI.Notifications.UserNotification, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    $l = [Windows.UI.Notifications.Management.UserNotificationListener]::Current
+    $a = "$(Await ($l.RequestAccessAsync()) ([Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus]))"
+    if ($a -ne $script:notifAccess) { $script:notifAccess = $a; Out-J @{ t = 'notifAccess'; status = $a } }
+    if ($a -eq 'Allowed') { $script:notifL = $l }
+  } catch { if ($script:notifAccess -ne 'Error') { $script:notifAccess = 'Error'; Out-J @{ t = 'notifAccess'; status = 'Error' } } }
+}
+function Get-NotifIcon($n, [string]$key) {
+  if ($script:notifIcons.ContainsKey($key)) { return $script:notifIcons[$key] }
+  $data = ''
+  try {
+    $ref = $n.AppInfo.DisplayInfo.GetLogo((New-Object Windows.Foundation.Size 48, 48))
+    $st = Await ($ref.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+    $ns = $script:asStream.Invoke($null, @($st)); $ms = New-Object System.IO.MemoryStream; $ns.CopyTo($ms); $ns.Dispose()
+    if ($ms.Length -gt 0 -and $ms.Length -lt 400KB) { $data = 'data:image/png;base64,' + [Convert]::ToBase64String($ms.ToArray()) }
+  } catch {}
+  $script:notifIcons[$key] = $data
+  return $data
+}
+function Get-Notifs {
+  if (-not $script:notifOn) { return }
+  Init-Notifs
+  if (-not $script:notifL) { return }
+  try { $list = @(Await ($script:notifL.GetNotificationsAsync([Windows.UI.Notifications.NotificationKinds]::Toast)) ([System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]])) } catch { return }
+  $live = @{}
+  foreach ($n in $list) {
+    if (-not $n) { continue }
+    $id = [string]$n.Id; $live[$id] = 1
+    if ($script:notifSeen.ContainsKey($id)) { continue }
+    $script:notifSeen[$id] = 1
+    if (-not $script:notifPrimed) { continue }   # as que já estavam na central quando ligou não aparecem
+    try { if (([DateTimeOffset]::Now - $n.CreationTime).TotalSeconds -gt 90) { continue } } catch {}
+    $app = ''; $aumid = ''
+    try { $app = "$($n.AppInfo.DisplayInfo.DisplayName)"; $aumid = "$($n.AppInfo.AppUserModelId)" } catch {}
+    $texts = @()
+    try { $b = $n.Notification.Visual.GetBinding([Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric); if ($b) { $texts = @($b.GetTextElements() | ForEach-Object { "$($_.Text)" } | Where-Object { $_ }) } } catch {}
+    if ($texts.Count -eq 0) { continue }
+    $body = (@($texts | Select-Object -Skip 1) -join "`n")
+    if ($body.Length -gt 400) { $body = $body.Substring(0, 400) }
+    Out-J @{ t = 'notif'; id = $id; app = $app; aumid = $aumid; title = "$($texts[0])"; body = $body; icon = (Get-NotifIcon $n $aumid) }
+  }
+  foreach ($k in @($script:notifSeen.Keys)) { if (-not $live.ContainsKey($k)) { $script:notifSeen.Remove($k) } }
+  $script:notifPrimed = $true
+}
+
 function Get-Disk {
   $d = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
   Out-J @{ t = 'disk'; drives = @($d | ForEach-Object { @{ name = $_.Name; used = [int64]$_.Used; total = [int64]($_.Used + $_.Free) } }) }
@@ -341,6 +392,7 @@ while ($true) {
       'micmute' { [IslandNative]::ToggleMic(); $script:lastAv = ''; Get-Av }
       'mon'   { [IslandNative]::MonX = [int]$parts[1]; [IslandNative]::MonY = [int]$parts[2]; $lastFg = $null }
       'disk'  { Get-Disk }
+      'notifs' { $script:notifOn = ($parts[1] -eq '1'); if (-not $script:notifOn) { $script:notifPrimed = $false; $script:notifSeen = @{} } }
       'quit'  { exit }
     }
   }
@@ -363,6 +415,7 @@ while ($true) {
   if ($i % 1100 -eq 5) { Load-Radios }   # recarrega a lista de rádios a cada ~3 min (e logo no início)
   if ($i % 18 -eq 9) { Get-Radios $false }
   if ($i % 6 -eq 1) { Get-Av }
+  if ($i % 8 -eq 2) { Get-Notifs }   # ~1,3 s
   Start-Sleep -Milliseconds 160
   $i++
 }

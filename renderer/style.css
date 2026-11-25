@@ -698,6 +698,59 @@ body.dragging .drop-hint { opacity: 1; }
 .a-btns button.blue { background: var(--blue); color: #fff; }
 .a-text code { display: block; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 11.5px; color: var(--t2); background: rgba(255, 255, 255, .07); border-radius: 7px; padding: 4px 7px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* ================= versão 1.8 ================= */
+/* ajustes: texto pequeno embaixo do nome e botão compacto */
+.rt small { display: block; font-size: 11px; color: var(--t3); font-weight: 500; margin-top: 1px; line-height: 1.3; }
+.rt small button { color: var(--cyan); font-weight: 600; font-size: 11px; }
+.rt small button:hover { text-decoration: underline; }
+.pill-btn.sm { padding: 6px 13px; font-size: 12px; background: rgba(255, 255, 255, .12); }
+.pill-btn.sm.go { background: var(--blue); }
+.pill-btn:disabled { opacity: .4; pointer-events: none; }
+
+/* alerta: ícone azul, ícone do app e notificação com até 2 linhas */
+#alert .a-icon:has(.a-ico-blue, .a-appicon) { background: none; }
+.a-ico-blue { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 132, 255, .2); color: var(--cyan); }
+.a-appicon { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; }
+#alert.notif .a-text b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#alert.notif .a-text span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; line-height: 1.35; }
+
+/* em chamada */
+.call-ico { background: rgba(48, 209, 88, .22); color: var(--green); border-radius: 50%; }
+.c-left .call-ico svg { width: 12px; height: 12px; }
+.c-btn { pointer-events: auto; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .13); color: var(--t1); transition: background .2s, transform .25s var(--spring); }
+.c-right .c-btn svg { width: 14px; height: 14px; }
+.c-btn:hover { background: rgba(255, 255, 255, .22); }
+.c-btn.muted { background: var(--red); color: #fff; }
+.c-btn:active { transform: scale(.88); }
+
+/* barra de comandos */
+#island.command { --r: 26px; --er: 16px; box-shadow: 0 24px 60px -14px rgba(0, 0, 0, .75); }
+#island.float.command { --r: 26px; }
+#cmd { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 8px 10px 10px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+#island.command #cmd { opacity: 1; pointer-events: auto; transition: opacity .3s ease .12s; }
+.cmd-in { height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 10px; flex: none; }
+.cmd-in > svg { width: 19px; height: 19px; color: var(--t2); flex: none; }
+#cmd-q { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font-size: 17px; font-weight: 500; letter-spacing: -.015em; }
+#cmd-q::placeholder { color: var(--t3); }
+.cmd-in kbd { font-size: 10.5px; padding: 2px 6px; }
+.cmd-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; overflow: hidden; }
+.cmd-list:empty { display: none; }
+.cmd-row { height: 44px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 10px; border-radius: 12px; text-align: left; transition: background .12s; }
+.cmd-row.on { background: rgba(255, 255, 255, .1); }
+.cmd-ic { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: rgba(255, 255, 255, .07); overflow: hidden; }
+.cmd-ic svg { width: 17px; height: 17px; }
+.cmd-ic img { width: 26px; height: 26px; object-fit: contain; }
+.cmd-letter { font-weight: 700; font-size: 14px; color: var(--t2); }
+.cmd-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cmd-t b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmd-t small { font-size: 11px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmd-row.big b { font-size: 16px; }
+.cmd-row.big .cmd-ic { background: rgba(10, 132, 255, .22); color: var(--cyan); }
+.cmd-row kbd { font-size: 10.5px; padding: 2px 6px; flex: none; }
+#cmd-open { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; color: var(--t3); transition: background .2s, color .2s; }
+#cmd-open:hover { background: rgba(255, 255, 255, .1); color: var(--t1); }
+#cmd-open svg { width: 15px; height: 15px; }
+
 /* ponto de microfone / câmera em uso (como no iPhone) */
 .pdot { position: absolute; right: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); opacity: 0; transform: scale(.4); transition: opacity .3s, transform .4s var(--spring); pointer-events: none; z-index: 2; }
 .pdot.cam { background: var(--green); box-shadow: 0 0 8px var(--green); }

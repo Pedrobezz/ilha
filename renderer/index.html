@@ -33,10 +33,16 @@
     <div class="a-btns"></div>
   </div>
 
+  <!-- barra de comandos (Ctrl+Alt+Espaço e comece a digitar) -->
+  <div id="cmd">
+    <div class="cmd-in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg><input id="cmd-q" placeholder="Apps, contas, conversões, ações…" spellcheck="false" autocomplete="off"><kbd>Esc</kbd></div>
+    <div class="cmd-list" id="cmd-list"></div>
+  </div>
+
   <!-- painel expandido -->
   <div id="panel">
     <header class="bar r0">
-      <div class="bar-l"><span id="bar-time">--:--</span></div>
+      <div class="bar-l"><span id="bar-time">--:--</span><button id="cmd-open" title="Barra de comandos (com a ilha aberta pelo atalho, é só digitar)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg></button></div>
       <nav id="tabs">
         <span class="tab-pill"></span>
         <button data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Início</span></button>
@@ -281,6 +287,9 @@
               <div class="row"><span class="ri" style="--c:#30b0c7"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><span class="rt">Monitor</span><div class="seg" id="set-monitor"><button data-v="primary">Principal</button><button data-v="cursor">Do mouse</button></div></div>
               <label class="row"><span class="ri" style="--c:#ff375f"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg></span><span class="rt">Avisos ao vivo</span><input type="checkbox" class="switch" id="set-alerts"></label>
               <label class="row"><span class="ri" style="--c:#30d158"><svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg></span><span class="rt">Iniciar com o Windows</span><input type="checkbox" class="switch" id="set-start"></label>
+              <div class="row"><span class="ri" style="--c:#0a84ff"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2.5"/><path d="M8 21h8M12 17v4M7.5 9h6M7.5 12h4"/></svg></span><span class="rt">Notificações do Windows<small id="notif-sub"></small></span><input type="checkbox" class="switch" id="set-notifs"></div>
+              <label class="row"><span class="ri" style="--c:#bf5af2"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 7v3"/></svg></span><span class="rt">Gestos na ilha fechada<small>Rolar: volume · de lado: faixa · botão do meio: pausar</small></span><input type="checkbox" class="switch" id="set-gestures"></label>
+              <div class="row"><span class="ri" style="--c:#30b0c7"><svg viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5"/><path d="M4.5 16.5v2a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-2"/></svg></span><span class="rt">Atualizações<small id="upd-status"></small></span><button id="upd-btn" class="pill-btn sm">Procurar</button></div>
             </div>
             <h4 class="gh r2">Contas e dados</h4>
             <div class="group r2">
