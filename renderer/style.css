@@ -759,3 +759,30 @@ body.dragging .drop-hint { opacity: 1; }
 .cl-gh button.fail i { background: var(--red); }
 .cl-gh button.run i { background: var(--orange); animation: pulse 1s infinite; }
 .cl-gh i { width: 6px; height: 6px; border-radius: 50%; background: var(--t3); }
+
+/* ================= mascote do Claude ================= */
+.lane { position: absolute; left: 16px; right: 16px; bottom: 5px; height: 18px; pointer-events: none; opacity: 0; transition: opacity .35s ease; }
+.mascot { position: absolute; bottom: 0; left: 0; width: 26px; height: 18px; animation: m-walk 9s linear infinite; }
+.mascot svg { width: 26px; height: 18px; display: block; shape-rendering: crispEdges; animation: m-bob .36s steps(1) infinite; }
+.mascot .fa { animation: m-fa .36s steps(1) infinite; }
+.mascot .fb { animation: m-fb .36s steps(1) infinite; }
+@keyframes m-fa { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes m-fb { 0% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes m-bob { 0% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+/* anda até a ponta, vira, volta (e às vezes para para olhar) */
+@keyframes m-walk {
+  0% { left: 0; transform: scaleX(1); }
+  44% { left: calc(100% - 26px); transform: scaleX(1); }
+  50% { left: calc(100% - 26px); transform: scaleX(-1); }
+  94% { left: 0; transform: scaleX(-1); }
+  100% { left: 0; transform: scaleX(1); }
+}
+/* ilha compacta mais alta: texto em cima, mascote andando embaixo */
+#island.walk #compact { bottom: auto; height: 36px; }
+#island.walk .lane { opacity: 1; transition-delay: .25s; }
+#island.walk .pdot.on { top: 18px; }
+/* aba Claude */
+.cl-lane { position: relative; left: 0; right: 0; bottom: auto; height: 18px; margin: -4px 0 -6px; }
+.cl-now.working .cl-lane { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .mascot, .mascot svg, .mascot .fa, .mascot .fb { animation: none; } }
+.mascot svg, .mascot rect { stroke: none !important; }

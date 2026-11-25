@@ -35,13 +35,14 @@ function render() {
   let mode, size;
   if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
+  const walk = mode === 'compact' && activity() === 'claude' && S.cfg.mascot !== false; // mascote passeando embaixo do texto
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
   const transient = mode === 'compact' && ['notice', 'vol'].includes(activity());
   const hidden = S.covered && (mode === 'collapsed' || mode === 'compact') && !transient;
   const float = S.cfg.islandStyle === 'float';
-  isl.className = mode + (hidden ? ' hidden-top' : '') + (float ? ' float' : '') + (S.cfg.islandColor === 'theme' ? ' themed' : '');
+  isl.className = mode + (hidden ? ' hidden-top' : '') + (float ? ' float' : '') + (S.cfg.islandColor === 'theme' ? ' themed' : '') + (walk ? ' walk' : '') + (isl.classList.contains('pulsing') ? ' pulsing' : '');
   isl.style.setProperty('--w', size[0] + 'px');
   isl.style.setProperty('--h', size[1] + 'px');
   S.size = size;
@@ -705,7 +706,11 @@ function softChime() {
 window.ilha.onShLog(l => {
   const m = /^Regra "?(.+?)"? disparou/.exec(l.msg || '');
   if (m) notice('home', '#ff9f0a', 'Casa', `Regra “${m[1]}” disparou`, 4500);
-  else if (l.level === 'error') notice('home', '#ff453a', 'Casa', l.msg, 5000);
+  else if (l.level === 'error') {
+    // o mesmo erro (ex.: conta Tuya expirada) se repete a cada tentativa: mostra no máximo a cada 30 min
+    const k = String(l.msg).slice(0, 60), seen = (S.shErrSeen = S.shErrSeen || {});
+    if (Date.now() - (seen[k] || 0) > 30 * 60e3) { seen[k] = Date.now(); notice('home', '#ff453a', 'Casa', l.msg, 5000); }
+  }
 });
 
 /* =================== casa (SmartHouse) =================== */
@@ -1060,6 +1065,16 @@ document.addEventListener('drop', e => {
   addFiles(card.id === 'shelf-card' ? 'shelf' : 'favs', paths);
 });
 
+
+/* =================== mascote do Claude (pixel art, dois quadros de passos) =================== */
+// O = corpo laranja, E = olho. Quadro A e B mudam só as perninhas, para parecer que ele anda.
+(function drawMascot() {
+  const body = ['..OOOOOOO..', '..OEOOOEO..', 'OOOEOOOEOOO', '..OOOOOOO..', '..OOOOOOO..'];
+  const legsA = ['..O.O.O.O..', '..O.O.O.O..'], legsB = ['...O.O.O.O.', '...O.O.O.O.'];
+  const rects = (rows, y0) => rows.map((r, y) => [...r].map((ch, x) => ch === '.' ? '' : `<rect x="${x}" y="${y + y0}" width="1" height="1" fill="${ch === 'E' ? '#1a1410' : '#d97757'}"/>`).join('')).join('');
+  const svg = `<svg viewBox="0 0 11 7.5" preserveAspectRatio="xMidYMax meet">${rects(body, 0)}<g class="fa">${rects(legsA, 5)}</g><g class="fb">${rects(legsB, 5)}</g></svg>`;
+  document.querySelectorAll('.mascot').forEach(m => { m.innerHTML = svg; });
+})();
 
 /* =================== versão 1.4 =================== */
 const IC2 = {

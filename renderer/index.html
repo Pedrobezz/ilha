@@ -20,6 +20,9 @@
     <div class="c-right"></div>
   </div>
 
+  <!-- mascote do Claude passeando (quando o Claude está trabalhando) -->
+  <div class="lane" id="isl-lane"><div class="mascot"></div></div>
+
   <!-- alerta (ex.: timer acabou) -->
   <div id="alert">
     <div class="a-icon"></div>
@@ -207,6 +210,7 @@
         <div class="cl-grid">
           <div class="card cl-now r1" id="cl-now">
             <div class="cl-head"><span class="cl-logo"><svg viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7" stroke-width="2.6"/></svg></span><div><b id="cl-state">Claude</b><span id="cl-project">Sem atividade ainda</span></div><em class="cl-badge" id="cl-badge">parado</em></div>
+            <div class="lane cl-lane"><div class="mascot"></div></div>
             <div class="cl-activity" id="cl-activity">Quando você pedir algo ao Claude Code, aparece aqui o que ele está fazendo.</div>
             <div class="cl-today" id="cl-today"></div>
             <div class="cl-stats">
