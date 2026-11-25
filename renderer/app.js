@@ -126,6 +126,7 @@ function onTabShown() {
   if (S.tab === 'casa') loadCasa();
   if (S.tab === 'sys') window.ilha.disk();
   if (S.tab === 'claude') renderClaude();
+  if (S.tab === 'claude' || S.tab === 'set') loadHooks(); // pode ter mudado por fora
   if (S.tab === 'home') askBright();
 }
 
@@ -1923,6 +1924,26 @@ cmdList.addEventListener('mousemove', e => { const r = e.target.closest('.cmd-ro
 cmdList.addEventListener('click', e => { const r = e.target.closest('.cmd-row'); if (r) S.cmd?.items[+r.dataset.i]?.run(); });
 $('#cmd-open').addEventListener('click', () => openCmd(''));
 
+/* ---- conectar ao Claude Code com um clique ---- */
+async function loadHooks() { S.hooks = await window.ilha.claudeHooks('status'); renderHooks(); }
+function renderHooks() {
+  const h = S.hooks || {}, sub = $('#hooks-sub'), b = $('#hooks-btn');
+  if (!h.ok) { sub.textContent = h.error || 'Não consegui ler a configuração do Claude Code'; b.textContent = 'Tentar de novo'; b.classList.remove('go'); }
+  else if (h.connected) { sub.textContent = h.statusLine === 'other' ? 'Conectado · sem uso do plano (você já tem outra linha de status)' : 'Conectado · avisos, permissões e uso'; b.textContent = 'Desconectar'; b.classList.remove('go'); }
+  else { sub.textContent = h.partial ? 'Conectado pela metade: clique para completar' : 'Avisos, Permitir/Negar e uso do plano na ilha'; b.textContent = 'Conectar'; b.classList.add('go'); }
+  $('#cl-now').classList.toggle('disconnected', !!h.ok && !h.connected);
+}
+async function hooksAction() {
+  const action = !S.hooks?.ok ? 'status' : S.hooks.connected ? 'disconnect' : 'connect';
+  const r = await window.ilha.claudeHooks(action);
+  S.hooks = r; renderHooks();
+  if (!r.ok) return toast(r.error);
+  if (action === 'connect') toast('Conectado! Abra o Claude Code de novo para valer');
+  else if (action === 'disconnect') toast('Claude Code desconectado da Ilha');
+}
+$('#hooks-btn').addEventListener('click', hooksAction);
+$('#cl-connect-btn').addEventListener('click', hooksAction);
+
 /* =================== início =================== */
 (async function init() {
   S.cfg = await window.ilha.getCfg();
@@ -1938,6 +1959,7 @@ $('#cmd-open').addEventListener('click', () => openCmd(''));
   S.agenda = await window.ilha.agenda(); renderAgenda();
   wallpaperTheme(true);
   renderUpdate(await window.ilha.updateGet());
+  loadHooks();
   // últimos valores do ajudante (volume, microfone, mídia, rádios): não espera mudarem para saber
   for (const m of await window.ilha.nativeLast()) handleNative({ ...m, first: true });
   $('#mascot-sleep').innerHTML = mascotSVG('sleep') + '<span class="zzz"><i>z</i><i>z</i><i>Z</i></span>';

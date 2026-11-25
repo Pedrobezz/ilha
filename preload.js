@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('ilha', {
   wallpaper: () => ipcRenderer.invoke('wallpaper'),
   updateGet: () => ipcRenderer.invoke('update:get'),
   nativeLast: () => ipcRenderer.invoke('native:last'),
+  claudeHooks: action => ipcRenderer.invoke('claudeHooks', action),
   updateCheck: () => ipcRenderer.send('update:check'),
   updateInstall: () => ipcRenderer.send('update:install'),
   openApp: aumid => ipcRenderer.send('openapp', aumid),

@@ -751,6 +751,12 @@ body.dragging .drop-hint { opacity: 1; }
 #cmd-open:hover { background: rgba(255, 255, 255, .1); color: var(--t1); }
 #cmd-open svg { width: 15px; height: 15px; }
 
+/* Claude Code ainda não conectado: o cartão mostra o botão no lugar dos números */
+.cl-connect { display: none; }
+#cl-now.disconnected .cl-stats, #cl-now.disconnected .cl-today { display: none; }
+#cl-now.disconnected .cl-connect { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 10px; font-size: 12.5px; color: var(--t2); }
+#cl-now.disconnected .cl-connect .pill-btn { background: #d97757; color: #fff; }
+
 /* ponto de microfone / câmera em uso (como no iPhone) */
 .pdot { position: absolute; right: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); opacity: 0; transform: scale(.4); transition: opacity .3s, transform .4s var(--spring); pointer-events: none; z-index: 2; }
 .pdot.cam { background: var(--green); box-shadow: 0 0 8px var(--green); }

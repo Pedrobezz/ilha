@@ -187,6 +187,85 @@ function claudeServer() {
   srv.listen(CLAUDE_PORT, '127.0.0.1');
 }
 
+// ---------- conectar ao Claude Code com um clique (hooks em ~/.claude/settings.json) ----------
+// Os comandos usam a sintaxe do Git Bash, que é onde o Claude Code roda os hooks no Windows.
+const hookCmd = (route, maxTime, keepOutput) => `curl -s -m ${maxTime}${keepOutput ? '' : ' -o /dev/null'} -X POST -H "x-ilha-key: $(cat ~/.ilha/claude-key 2>/dev/null)" -H "content-type: application/json" --data-binary @- http://127.0.0.1:${CLAUDE_PORT}${route} 2>/dev/null || true`;
+const ILHA_HOOKS = {
+  Stop: { command: hookCmd('/claude', 2), timeout: 5 },
+  Notification: { command: hookCmd('/claude', 2), timeout: 5 },
+  UserPromptSubmit: { command: hookCmd('/claude', 2), timeout: 5, async: true },
+  PreToolUse: { command: hookCmd('/claude', 2), timeout: 5, async: true },
+  PermissionRequest: { command: hookCmd('/claude/permission', 35, true), timeout: 40 },
+};
+const ILHA_STATUS = hookCmd('/claude/status', 2).replace(/ \|\| true$/, '; true');
+const isIlhaCmd = c => String(c || '').includes(`127.0.0.1:${CLAUDE_PORT}/claude`);
+const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+function readClaudeSettings() {
+  const file = claudeSettingsFile();
+  let text;
+  try { text = fs.readFileSync(file, 'utf8').replace(/^﻿/, ''); } catch (e) { if (e.code === 'ENOENT') return { file, json: {}, exists: false, text: null }; throw new Error('Não consegui ler o settings.json do Claude Code.'); }
+  if (!text.trim()) return { file, json: {}, exists: true, text };
+  let json;
+  try { json = JSON.parse(text); } catch (_) { throw new Error('O settings.json do Claude Code tem um erro de formatação. Corrija antes de conectar.'); }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('O settings.json do Claude Code não está no formato esperado.');
+  return { file, json, exists: true, text };
+}
+// tira os hooks da Ilha e deixa os seus como estão
+function stripIlhaHooks(json) {
+  const h = json.hooks && typeof json.hooks === 'object' && !Array.isArray(json.hooks) ? json.hooks : {};
+  for (const ev of Object.keys(h)) {
+    if (!Array.isArray(h[ev])) continue;
+    h[ev] = h[ev].map(g => (g && Array.isArray(g.hooks) ? { ...g, hooks: g.hooks.filter(x => !isIlhaCmd(x?.command)) } : g)).filter(g => !g || !Array.isArray(g.hooks) || g.hooks.length);
+    if (!h[ev].length) delete h[ev];
+  }
+  return h;
+}
+function writeClaudeSettings(file, json, oldText) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (oldText != null) fs.writeFileSync(file + '.ilha-backup', oldText); // cópia de como estava, por segurança
+  const tmp = file + '.ilha-tmp';
+  fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
+  fs.renameSync(tmp, file);
+}
+function claudeHooksStatus() {
+  try {
+    const { file, json, exists } = readClaudeSettings();
+    const h = json.hooks || {}, events = Object.keys(ILHA_HOOKS);
+    const have = events.filter(ev => Array.isArray(h[ev]) && h[ev].some(g => (g?.hooks || []).some(x => isIlhaCmd(x?.command))));
+    const sl = json.statusLine;
+    return { ok: true, file, exists, connected: have.length === events.length, partial: have.length > 0 && have.length < events.length, statusLine: !sl ? 'none' : isIlhaCmd(sl.command) ? 'ilha' : 'other', claudeDir: fs.existsSync(path.dirname(file)) };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+function claudeConnect() {
+  const { file, json, text } = readClaudeSettings();
+  const h = stripIlhaHooks(json);
+  for (const [ev, hook] of Object.entries(ILHA_HOOKS)) (h[ev] = Array.isArray(h[ev]) ? h[ev] : []).push({ hooks: [{ type: 'command', ...hook }] });
+  json.hooks = h;
+  // a linha de status traz os limites do plano; se você já usa outra, ela fica como está
+  if (!json.statusLine || isIlhaCmd(json.statusLine.command)) json.statusLine = { type: 'command', command: ILHA_STATUS };
+  writeClaudeSettings(file, json, text);
+  writeClaudeKey();
+  return claudeHooksStatus();
+}
+function claudeDisconnect() {
+  const { file, json, text, exists } = readClaudeSettings();
+  if (!exists) return claudeHooksStatus();
+  json.hooks = stripIlhaHooks(json);
+  if (!Object.keys(json.hooks).length) delete json.hooks;
+  if (json.statusLine && isIlhaCmd(json.statusLine.command)) delete json.statusLine;
+  writeClaudeSettings(file, json, text);
+  return claudeHooksStatus();
+}
+// a chave também vai para ~/.ilha/claude-key, que o hook do Claude Code lê na hora de enviar.
+// (fora do %APPDATA% de propósito: apps empacotados, como o Claude para Windows, enxergam outra cópia do %APPDATA%)
+function writeClaudeKey() {
+  try {
+    const dir = path.join(os.homedir(), '.ilha');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'claude-key'), cfg.claudeKey);
+  } catch (_) {}
+}
+
 // ---------- Permitir / Negar pela ilha (hook PermissionRequest) ----------
 // O hook fica esperando a resposta. Sem resposta em 30 s (ou com avisos desligados), devolve vazio
 // e o Claude mostra o pedido de permissão normal dele.
@@ -913,6 +992,11 @@ function setupIpc() {
   // atualização
   ipcMain.handle('update:get', () => upd);
   ipcMain.handle('native:last', () => Object.values(nativeLast));
+  // conectar / desconectar o Claude Code
+  ipcMain.handle('claudeHooks', (_, action) => {
+    try { return action === 'connect' ? claudeConnect() : action === 'disconnect' ? claudeDisconnect() : claudeHooksStatus(); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
   ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { app.isQuitting = true; updater.quitAndInstall(true, true); } });
   // notificações do Windows
   ipcMain.on('openapp', (_, aumid) => openApp(aumid));
@@ -944,13 +1028,7 @@ function setupTray() {
 app.whenReady().then(() => {
   loadCfg();
   if (!cfg.claudeKey) { cfg.claudeKey = require('crypto').randomBytes(18).toString('base64url'); try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} }
-  // a chave também vai para ~/.ilha/claude-key, que o hook do Claude Code lê na hora de enviar.
-  // (fora do %APPDATA% de propósito: apps empacotados, como o Claude para Windows, enxergam outra cópia do %APPDATA%)
-  try {
-    const dir = path.join(os.homedir(), '.ilha');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'claude-key'), cfg.claudeKey);
-  } catch (_) {}
+  writeClaudeKey();
   // versão instalada: regrava o "iniciar com o Windows" apontando para o .exe instalado
   if (app.isPackaged && cfg.startup) app.setLoginItemSettings({ openAtLogin: true });
   createWindow();

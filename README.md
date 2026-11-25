@@ -10,7 +10,7 @@ Uma "ilha dinâmica" para o Windows: fica no topo da tela, no centro, como o not
 4. Pronto: instala em um clique, cria atalhos e abre a Ilha. Não precisa de Node, npm nem nada instalado.
 5. A partir da 1.8, a Ilha **se atualiza sozinha**: procura versão nova ao abrir e a cada 6 horas, baixa em segundo plano e avisa "Atualização pronta" com o botão **Reiniciar** (ou instala quando você sair). Em *Ajustes → Atualizações* dá para procurar na hora.
 
-Para os avisos do Claude Code nesse outro PC, copie também o arquivo `~/.claude/settings.json` (hooks e linha de status) deste README.
+Para os avisos do Claude Code nesse outro PC: abra a Ilha e clique em **Conectar ao Claude Code** (aba Claude, ou *Ajustes → Claude Code*). Depois feche e abra o Claude Code de novo.
 
 ## Gerar o instalador (desenvolvimento)
 
@@ -41,7 +41,11 @@ Para os avisos do Claude Code nesse outro PC, copie também o arquivo `~/.claude
 
 ## Avisos do Claude Code
 
-A Ilha mostra quando o Claude Code **termina** uma resposta (aviso compacto) e quando ele **pede permissão** ou espera você (alerta com som). Funciona por hooks do Claude Code em `~/.claude/settings.json` (`Stop` e `Notification`), que enviam o evento para `http://127.0.0.1:47823/claude`:
+A Ilha mostra quando o Claude Code **termina** uma resposta (aviso compacto) e quando ele **pede permissão** ou espera você (alerta com som).
+
+**Para ligar:** clique em **Conectar ao Claude Code** (aba Claude ou *Ajustes → Claude Code*) e abra o Claude Code de novo. O botão acrescenta os hooks abaixo em `~/.claude/settings.json` sem mexer no resto (guarda uma cópia em `settings.json.ilha-backup`), não duplica se já estiver conectado e não troca uma linha de status que você já use. **Desconectar** tira só o que é da Ilha.
+
+Funciona por hooks do Claude Code (`Stop` e `Notification`), que enviam o evento para `http://127.0.0.1:47823/claude`:
 
 ```json
 { "type": "command", "command": "curl -s -m 2 -o /dev/null -X POST -H \"x-ilha-key: $(cat ~/.ilha/claude-key 2>/dev/null)\" -H \"content-type: application/json\" --data-binary @- http://127.0.0.1:47823/claude 2>/dev/null || true" }
