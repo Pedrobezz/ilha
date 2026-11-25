@@ -741,6 +741,8 @@ body.dragging .drop-hint { opacity: 1; }
 .cmd-ic svg { width: 17px; height: 17px; }
 .cmd-ic img { width: 26px; height: 26px; object-fit: contain; }
 .cmd-letter { font-weight: 700; font-size: 14px; color: var(--t2); }
+.cmd-emoji { font-size: 20px; line-height: 1; font-family: 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif; }
+.cmd-t b { font-family: inherit; }
 .cmd-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .cmd-t b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmd-t small { font-size: 11px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

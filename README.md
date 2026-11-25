@@ -38,12 +38,20 @@ Para os avisos do Claude Code nesse outro PC: abra a Ilha e clique em **Conectar
 - **Notificações do Windows na ilha:** WhatsApp, Discord, e-mail e qualquer app que mande notificação aparecem num aviso com o ícone do app, o texto e os botões **Abrir** e **Silenciar** (aquele app para de aparecer; *Ajustes → Notificações do Windows → Mostrar de novo* desfaz). Não interrompe quem está usando o painel: espera fechar. Dá para desligar em Ajustes, e aí a Ilha nem lê as notificações.
 - **Gestos na ilha fechada:** rolar o mouse em cima muda o volume (5% por clique da rodinha), rolar de lado (ou Shift + rolar) troca de faixa, e o botão do meio pausa/toca. Como a ilha abre ao passar o mouse, rolar logo em seguida ainda conta como gesto.
 - **Barra de comandos:** abre apps (todos do menu Iniciar, inclusive os da Store), faz contas (`12*3,5`, `200 + 15%`), converte unidades (`5 km em mi`, `30 c em f`, `1,5 gb em mb`) e moedas pela cotação do Banco Central Europeu (`100 usd em brl`, `dólar`, `50 euro`), abre sites e favoritos, e faz ações da ilha: `timer 10`, `nota comprar pão`, `print`, `teste de internet`, `mudo`, `microfone`, `wifi`, abas (`casa`, `claude`…). Se nada servir, pesquisa no Google. Enter copia resultados; os apps mais usados sobem na lista.
+  - **Arquivos:** com a barra vazia aparecem os arquivos abertos há pouco; digitando, os arquivos com esse nome entram na lista; `arq nome` mostra só arquivos. Enter abre, Ctrl+Enter mostra na pasta. A Ilha guarda sozinha os nomes dos arquivos das suas pastas (Área de Trabalho, Documentos, Downloads, Imagens, OneDrive e as pastas do seu usuário, sem `node_modules`, `.git` etc.), só nomes e caminhos, sem depender da Pesquisa do Windows.
+  - **Área de transferência:** `clip` mostra o que você copiou; `clip senha` filtra; textos copiados também aparecem na busca normal. Enter copia de novo.
+  - **Emojis:** `emoji fogo` ou `:fogo` (nomes em português). Enter copia.
+  - **Copiar texto de um print:** `texto do print` (ou **Ctrl + Alt + T** de qualquer lugar): recorte a área e o texto vai direto para a área de transferência, lido pelo OCR do próprio Windows, sem internet. `texto da imagem` lê a última imagem da prateleira.
 
 ## Avisos do Claude Code
 
 A Ilha mostra quando o Claude Code **termina** uma resposta (aviso compacto) e quando ele **pede permissão** ou espera você (alerta com som).
 
-**Para ligar:** clique em **Conectar ao Claude Code** (aba Claude ou *Ajustes → Claude Code*) e abra o Claude Code de novo. O botão acrescenta os hooks abaixo em `~/.claude/settings.json` sem mexer no resto (guarda uma cópia em `settings.json.ilha-backup`), não duplica se já estiver conectado e não troca uma linha de status que você já use. **Desconectar** tira só o que é da Ilha.
+**Para ligar:** clique em **Conectar ao Claude Code** (aba Claude ou *Ajustes → Claude Code*) e abra o Claude Code de novo. O botão acrescenta os hooks em `~/.claude/settings.json` sem mexer no resto (guarda uma cópia em `settings.json.ilha-backup`), não duplica se já estiver conectado e não troca uma linha de status que você já use. **Desconectar** tira só o que é da Ilha.
+
+Os hooks chamam o script `~/.ilha/hook.ps1` (que a Ilha grava e mantém atualizado), porque ele funciona qualquer que seja o shell em que o Claude roda os hooks: Git Bash, PowerShell ou cmd. A versão antiga usava `curl` com sintaxe do bash e não chegava quando o Claude usava o PowerShell; a 1.8.2 converte sozinha, uma vez, quem estava conectado desse jeito.
+
+**Não chega aviso?** Em *Ajustes → Claude Code* aparece quando chegou o último sinal do Claude, e o botão **Testar** roda o hook pelo Git Bash e pelo PowerShell e diz onde falha (comando, chave errada, ou o Claude que não está chamando o hook, por exemplo numa conversa que roda na nuvem).
 
 Funciona por hooks do Claude Code (`Stop` e `Notification`), que enviam o evento para `http://127.0.0.1:47823/claude`:
 

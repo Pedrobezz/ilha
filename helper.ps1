@@ -360,6 +360,30 @@ function Get-Notifs {
   $script:notifPrimed = $true
 }
 
+# ---- OCR: lê o texto de uma imagem com o leitor de texto do Windows (Windows.Media.Ocr), sem internet ----
+$ocrEngine = $null
+function Do-Ocr([string]$id, [string]$file) {
+  $stream = $null
+  try {
+    if (-not $script:ocrEngine) {
+      [void][Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+      [void][Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+      [void][Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics, ContentType = WindowsRuntime]
+      $script:ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+      if (-not $script:ocrEngine) { $l = [Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages | Select-Object -First 1; if ($l) { $script:ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($l) } }
+    }
+    if (-not $script:ocrEngine) { Out-J @{ t = 'ocr'; id = $id; ok = $false; error = 'noengine' }; return }
+    $f = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($file)) ([Windows.Storage.StorageFile])
+    $stream = Await ($f.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $dec = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $sb = Await ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $res = Await ($script:ocrEngine.RecognizeAsync($sb)) ([Windows.Media.Ocr.OcrResult])
+    $text = (@($res.Lines | ForEach-Object { $_.Text }) -join "`n")
+    Out-J @{ t = 'ocr'; id = $id; ok = $true; text = $text }
+  } catch { Out-J @{ t = 'ocr'; id = $id; ok = $false; error = 'read' } }
+  finally { if ($stream) { $stream.Dispose() } }
+}
+
 function Get-Disk {
   $d = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
   Out-J @{ t = 'disk'; drives = @($d | ForEach-Object { @{ name = $_.Name; used = [int64]$_.Used; total = [int64]($_.Used + $_.Free) } }) }
@@ -392,6 +416,7 @@ while ($true) {
       'micmute' { [IslandNative]::ToggleMic(); $script:lastAv = ''; Get-Av }
       'mon'   { [IslandNative]::MonX = [int]$parts[1]; [IslandNative]::MonY = [int]$parts[2]; $lastFg = $null }
       'disk'  { Get-Disk }
+      'ocr'   { if ($parts.Count -ge 3) { Do-Ocr $parts[1] ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($parts[2]))) } }   # caminho em base64 (acentos)
       'notifs' { $script:notifOn = ($parts[1] -eq '1'); if (-not $script:notifOn) { $script:notifPrimed = $false; $script:notifSeen = @{} } }
       'quit'  { exit }
     }

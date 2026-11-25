@@ -97,6 +97,7 @@ function startHelper() {
       if (!line.startsWith('{')) continue;
       let m; try { m = JSON.parse(line); } catch (_) { continue; }
       if (['vol', 'av', 'media', 'radios', 'notifAccess'].includes(m.t)) nativeLast[m.t] = m;
+      if (m.t === 'ocr') { ocrDone(m); continue; }
       if (m.t === 'fg') { st.covered = m.covered; send('covered', cfg.hideOnMax && m.covered); }
       else if (m.t === 'ready') { placeWindow(); helperCmd(`notifs ${cfg.winNotifs !== false ? 1 : 0}`); send('native', m); }
       else send('native', m);
@@ -160,6 +161,8 @@ async function shEvents() {
 // ---------- avisos do Claude Code (hooks Stop / Notification) ----------
 // Servidor só em 127.0.0.1, exige a chave no cabeçalho x-ilha-key (páginas da web não conseguem mandar esse cabeçalho sem CORS)
 const CLAUDE_PORT = 47823;
+// quando chegou o último sinal do Claude (com a chave certa / errada) e o último teste: ajuda a achar o problema
+const claudeSig = { ok: 0, bad: 0, test: 0 };
 function claudeServer() {
   const http = require('http');
   const srv = http.createServer((req, res) => {
@@ -167,11 +170,13 @@ function claudeServer() {
     if (req.method !== 'POST' || !['/claude', '/claude/status', '/claude/permission'].includes(req.url)) return end(404);
     const key = String(req.headers['x-ilha-key'] || '');
     const same = k => !!k && key.length === k.length && require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(k));
-    if (!same(cfg.claudeKey)) return end(401);
+    if (!same(cfg.claudeKey)) { claudeSig.bad = Date.now(); return end(401); }
     let size = 0; const chunks = [];
     req.on('data', c => { size += c.length; if (size > 256e3) req.destroy(); else chunks.push(c); });
     req.on('end', () => {
       let j = {}; try { j = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (_) {}
+      if (j.hook_event_name === 'IlhaTeste') { claudeSig.test = Date.now(); return end(204); }
+      claudeSig.ok = Date.now();
       if (req.url === '/claude/permission') return claudePermission(j, res);
       end(204);
       if (req.url === '/claude/status') return claudeStatus(j);
@@ -188,17 +193,53 @@ function claudeServer() {
 }
 
 // ---------- conectar ao Claude Code com um clique (hooks em ~/.claude/settings.json) ----------
-// Os comandos usam a sintaxe do Git Bash, que é onde o Claude Code roda os hooks no Windows.
-const hookCmd = (route, maxTime, keepOutput) => `curl -s -m ${maxTime}${keepOutput ? '' : ' -o /dev/null'} -X POST -H "x-ilha-key: $(cat ~/.ilha/claude-key 2>/dev/null)" -H "content-type: application/json" --data-binary @- http://127.0.0.1:${CLAUDE_PORT}${route} 2>/dev/null || true`;
-const ILHA_HOOKS = {
-  Stop: { command: hookCmd('/claude', 2), timeout: 5 },
-  Notification: { command: hookCmd('/claude', 2), timeout: 5 },
-  UserPromptSubmit: { command: hookCmd('/claude', 2), timeout: 5, async: true },
-  PreToolUse: { command: hookCmd('/claude', 2), timeout: 5, async: true },
-  PermissionRequest: { command: hookCmd('/claude/permission', 35, true), timeout: 40 },
-};
-const ILHA_STATUS = hookCmd('/claude/status', 2).replace(/ \|\| true$/, '; true');
-const isIlhaCmd = c => String(c || '').includes(`127.0.0.1:${CLAUDE_PORT}/claude`);
+// Dois jeitos de mandar o aviso, conforme o PC:
+//  - "bash": curl pelo Git Bash (rápido; é onde o Claude Code costuma rodar os hooks no Windows)
+//  - "ps": um script do PowerShell em ~/.ilha/hook.ps1, que funciona em qualquer shell (bash, PowerShell ou cmd)
+const ILHA_DIR = path.join(os.homedir(), '.ilha');
+const HOOK_PS1 = path.join(ILHA_DIR, 'hook.ps1');
+const HOOK_PS1_SRC = `# Ilha: repassa o evento do Claude Code para a Ilha (http://127.0.0.1:${CLAUDE_PORT}). Gerado pela Ilha.
+param([string]$Route = 'claude', [int]$Max = 2)
+$ErrorActionPreference = 'SilentlyContinue'
+try {
+  [Console]::InputEncoding = [Text.Encoding]::UTF8
+  $body = [Console]::In.ReadToEnd()
+  $key = (Get-Content -Raw -LiteralPath (Join-Path $HOME '.ilha\\claude-key')).Trim()
+  $req = [Net.HttpWebRequest]::Create("http://127.0.0.1:${CLAUDE_PORT}/" + $Route.TrimStart('/'))
+  $req.Method = 'POST'; $req.ContentType = 'application/json'; $req.Proxy = $null; $req.Timeout = $Max * 1000
+  $req.Headers.Add('x-ilha-key', $key)
+  $bytes = [Text.Encoding]::UTF8.GetBytes($body); $req.ContentLength = $bytes.Length
+  $s = $req.GetRequestStream(); $s.Write($bytes, 0, $bytes.Length); $s.Close()
+  $res = $req.GetResponse(); $out = (New-Object IO.StreamReader($res.GetResponseStream())).ReadToEnd(); $res.Close()
+  if ($out) { [Console]::OutputEncoding = [Text.Encoding]::UTF8; [Console]::Out.Write($out) }
+} catch {}
+exit 0
+`;
+function findGitBash() {
+  const pf = process.env.ProgramFiles || 'C:\\Program Files', pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const cands = [process.env.CLAUDE_CODE_GIT_BASH_PATH, path.join(pf, 'Git', 'bin', 'bash.exe'), path.join(pf86, 'Git', 'bin', 'bash.exe'), path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git', 'bin', 'bash.exe')];
+  for (const dir of String(process.env.PATH || '').split(';')) if (dir && fs.existsSync(path.join(dir, 'git.exe'))) cands.push(path.resolve(dir, '..', 'bin', 'bash.exe'));
+  return cands.find(p => p && fs.existsSync(p)) || '';
+}
+const bashCmd = (route, maxTime, keepOutput) => `curl -s -m ${maxTime}${keepOutput ? '' : ' -o /dev/null'} -X POST -H "x-ilha-key: $(cat ~/.ilha/claude-key 2>/dev/null)" -H "content-type: application/json" --data-binary @- http://127.0.0.1:${CLAUDE_PORT}${route} 2>/dev/null || true`;
+// a rota vai sem a barra inicial: o Git Bash transforma argumentos que começam com "/" em caminhos do Windows
+const psCmd = (route, maxTime) => `powershell -NoProfile -ExecutionPolicy Bypass -File "${HOOK_PS1.replace(/\\/g, '/')}" ${route.replace(/^\//, '')} ${maxTime}`;
+function ilhaHooks(style) {
+  const c = style === 'ps' ? psCmd : bashCmd;
+  return {
+    hooks: {
+      Stop: { command: c('/claude', 2), timeout: 5 },
+      Notification: { command: c('/claude', 2), timeout: 5 },
+      UserPromptSubmit: { command: c('/claude', 2), timeout: 5, async: true },
+      PreToolUse: { command: c('/claude', 2), timeout: 5, async: true },
+      PermissionRequest: { command: c('/claude/permission', 35, true), timeout: 40 },
+    },
+    status: style === 'ps' ? c('/claude/status', 2) : c('/claude/status', 2).replace(/ \|\| true$/, '; true'),
+  };
+}
+const HOOK_EVENTS = Object.keys(ilhaHooks('bash').hooks);
+const isIlhaCmd = c => { c = String(c || ''); return c.includes(`127.0.0.1:${CLAUDE_PORT}/claude`) || c.includes('.ilha/hook.ps1'); };
+const cmdStyle = c => (String(c || '').includes('.ilha/hook.ps1') ? 'ps' : 'bash');
 const claudeSettingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
 function readClaudeSettings() {
   const file = claudeSettingsFile();
@@ -227,25 +268,62 @@ function writeClaudeSettings(file, json, oldText) {
   fs.writeFileSync(tmp, JSON.stringify(json, null, 2) + '\n');
   fs.renameSync(tmp, file);
 }
+const ilhaStopCmd = json => (json.hooks?.Stop || []).flatMap(g => g?.hooks || []).find(x => isIlhaCmd(x?.command))?.command || '';
 function claudeHooksStatus() {
   try {
     const { file, json, exists } = readClaudeSettings();
-    const h = json.hooks || {}, events = Object.keys(ILHA_HOOKS);
-    const have = events.filter(ev => Array.isArray(h[ev]) && h[ev].some(g => (g?.hooks || []).some(x => isIlhaCmd(x?.command))));
-    const sl = json.statusLine;
-    return { ok: true, file, exists, connected: have.length === events.length, partial: have.length > 0 && have.length < events.length, statusLine: !sl ? 'none' : isIlhaCmd(sl.command) ? 'ilha' : 'other', claudeDir: fs.existsSync(path.dirname(file)) };
+    const h = json.hooks || {};
+    const have = HOOK_EVENTS.filter(ev => Array.isArray(h[ev]) && h[ev].some(g => (g?.hooks || []).some(x => isIlhaCmd(x?.command))));
+    const sl = json.statusLine, stop = ilhaStopCmd(json);
+    return {
+      ok: true, file, exists, connected: have.length === HOOK_EVENTS.length, partial: have.length > 0 && have.length < HOOK_EVENTS.length,
+      statusLine: !sl ? 'none' : isIlhaCmd(sl.command) ? 'ilha' : 'other', claudeDir: fs.existsSync(path.dirname(file)),
+      style: stop ? cmdStyle(stop) : '', gitBash: !!findGitBash(), lastOk: claudeSig.ok, lastBad: claudeSig.bad,
+    };
   } catch (e) { return { ok: false, error: e.message }; }
 }
-function claudeConnect() {
+// style: 'bash' ou 'ps'. Por padrão, o modo PowerShell: funciona qualquer que seja o shell que o Claude usa
+// (o modo bash quebra se o Claude rodar os hooks pelo PowerShell, que não entende "$(...)" nem "||")
+function claudeConnect(style) {
+  style = style === 'bash' ? 'bash' : 'ps';
   const { file, json, text } = readClaudeSettings();
-  const h = stripIlhaHooks(json);
-  for (const [ev, hook] of Object.entries(ILHA_HOOKS)) (h[ev] = Array.isArray(h[ev]) ? h[ev] : []).push({ hooks: [{ type: 'command', ...hook }] });
+  const h = stripIlhaHooks(json), set = ilhaHooks(style);
+  for (const [ev, hook] of Object.entries(set.hooks)) (h[ev] = Array.isArray(h[ev]) ? h[ev] : []).push({ hooks: [{ type: 'command', ...hook }] });
   json.hooks = h;
   // a linha de status traz os limites do plano; se você já usa outra, ela fica como está
-  if (!json.statusLine || isIlhaCmd(json.statusLine.command)) json.statusLine = { type: 'command', command: ILHA_STATUS };
-  writeClaudeSettings(file, json, text);
+  if (!json.statusLine || isIlhaCmd(json.statusLine.command)) json.statusLine = { type: 'command', command: set.status };
   writeClaudeKey();
+  writeClaudeSettings(file, json, text);
   return claudeHooksStatus();
+}
+// roda o hook "Stop" pelos shells que o Claude pode usar (Git Bash, se existir, e PowerShell) e confere se chegou na Ilha
+async function runHookIn(exe, args) {
+  const t0 = Date.now(); let ran = true, stderr = '';
+  await new Promise(resolve => {
+    let p; try { p = spawn(exe, args, { windowsHide: true, env: { ...process.env, HOME: process.env.HOME || os.homedir() } }); } catch (_) { ran = false; return resolve(); }
+    const t = setTimeout(() => { try { p.kill(); } catch (_) {} resolve(); }, 9000);
+    p.on('error', () => { ran = false; clearTimeout(t); resolve(); });
+    p.stderr.on('data', d => { stderr += d; });
+    p.on('exit', () => { clearTimeout(t); resolve(); });
+    p.stdin.end(JSON.stringify({ hook_event_name: 'IlhaTeste' }));
+  });
+  await new Promise(r => setTimeout(r, 300));
+  return { ran, reached: claudeSig.test >= t0, badKey: claudeSig.bad >= t0, stderr: stderr.trim().split('\n')[0]?.slice(0, 200) || '' };
+}
+async function claudeTest() {
+  const st = claudeHooksStatus(); if (!st.ok) return st;
+  writeClaudeKey();
+  const { json } = readClaudeSettings();
+  const cmd = ilhaStopCmd(json) || ilhaHooks('ps').hooks.Stop.command;
+  const bash = findGitBash();
+  const r = { bash: null, ps: null };
+  if (bash) r.bash = await runHookIn(bash, ['-c', cmd]);
+  r.ps = await runHookIn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd]);
+  const tried = [r.bash, r.ps].filter(Boolean);
+  return { ...claudeHooksStatus(), test: {
+    reached: tried.every(x => x.reached), bash: r.bash?.reached ?? null, ps: r.ps.reached,
+    badKey: tried.some(x => x.badKey), stderr: tried.find(x => !x.reached && x.stderr)?.stderr || '',
+  } };
 }
 function claudeDisconnect() {
   const { file, json, text, exists } = readClaudeSettings();
@@ -260,9 +338,11 @@ function claudeDisconnect() {
 // (fora do %APPDATA% de propósito: apps empacotados, como o Claude para Windows, enxergam outra cópia do %APPDATA%)
 function writeClaudeKey() {
   try {
-    const dir = path.join(os.homedir(), '.ilha');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'claude-key'), cfg.claudeKey);
+    fs.mkdirSync(ILHA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(ILHA_DIR, 'claude-key'), cfg.claudeKey);
+    // o script do modo PowerShell fica sempre atualizado com a versão da Ilha
+    let cur = ''; try { cur = fs.readFileSync(HOOK_PS1, 'utf8'); } catch (_) {}
+    if (cur !== '﻿' + HOOK_PS1_SRC) fs.writeFileSync(HOOK_PS1, '﻿' + HOOK_PS1_SRC);
   } catch (_) {}
 }
 
@@ -545,7 +625,8 @@ function dlWatch() {
 
 // ---------- print de uma área da tela: usa a ferramenta de recorte do Windows e guarda na prateleira ----------
 let printPoll = null;
-function takePrint() {
+// abre a ferramenta de recorte e chama onImage(img) quando o recorte chegar na área de transferência
+function captureArea(onImage) {
   clearInterval(printPoll);
   const sig = img => { if (img.isEmpty()) return ''; const b = img.toBitmap(); return `${img.getSize().width}x${img.getSize().height}:${b.length}:${b.subarray(0, 64).toString('hex')}`; };
   const before = sig(clipboard.readImage());
@@ -556,6 +637,37 @@ function takePrint() {
     const img = clipboard.readImage(), s = sig(img);
     if (!s || s === before) return;
     clearInterval(printPoll);
+    onImage(img);
+  }, 400);
+}
+// copiar texto de um print: recorta, lê o texto com o OCR do Windows e copia
+const ocrJobs = new Map();
+function ocrFile(file, source) {
+  const id = require('crypto').randomBytes(4).toString('hex');
+  ocrJobs.set(id, { source, at: Date.now() });
+  send('ocr', { state: 'reading' });
+  helperCmd(`ocr ${id} ${Buffer.from(file, 'utf8').toString('base64')}`);
+  setTimeout(() => { if (ocrJobs.delete(id)) send('ocr', { state: 'error', error: 'O leitor de texto demorou demais' }); }, 20000);
+}
+function ocrDone(m) {
+  const job = ocrJobs.get(m.id); if (!job) return;
+  ocrJobs.delete(m.id);
+  const text = String(m.text || '').trim();
+  if (!m.ok) return send('ocr', { state: 'error', error: m.error === 'noengine' ? 'O Windows não tem o leitor de texto instalado (Configurações → Idioma)' : 'Não consegui ler o texto da imagem' });
+  if (!text) return send('ocr', { state: 'empty' });
+  clipboard.writeText(text); // entra também no histórico da área de transferência
+  send('ocr', { state: 'done', chars: text.length, lines: text.split('\n').length, preview: text.replace(/\s+/g, ' ').slice(0, 80) });
+}
+function ocrCapture() {
+  captureArea(img => {
+    const file = path.join(os.tmpdir(), `ilha-ocr-${Date.now()}.png`);
+    try { fs.writeFileSync(file, img.toPNG()); } catch (_) { return send('ocr', { state: 'error', error: 'Não consegui salvar o recorte' }); }
+    ocrFile(file, 'capture');
+    setTimeout(() => { try { fs.unlinkSync(file); } catch (_) {} }, 30000);
+  });
+}
+function takePrint() {
+  captureArea(img => {
     const dir = path.join(app.getPath('pictures'), 'Ilha');
     try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
     const d = new Date(), pad = n => String(n).padStart(2, '0');
@@ -563,7 +675,73 @@ function takePrint() {
     try { fs.writeFileSync(file, img.toPNG()); } catch (_) { return; }
     cfg.shelf = [...(cfg.shelf || []), file].slice(-40); saveCfg();
     send('printed', { path: file, shelf: cfg.shelf });
-  }, 400);
+  });
+}
+
+// ---------- arquivos para a barra de comandos ----------
+// O índice do Windows (Windows Search) pode estar desligado: a Ilha guarda sozinha os nomes dos arquivos
+// das suas pastas (só nomes e caminhos, nunca o conteúdo) e procura nessa lista.
+const fidx = { list: [], at: 0, building: null };
+const SKIP_DIR = new Set(['node_modules', '.git', 'appdata', '$recycle.bin', '__pycache__', '.venv', 'venv', '.cache', '.next', '.nuxt', 'target', 'obj', '.gradle', '.idea', '.vs', 'site-packages', 'bower_components', '.npm', '.vscode', 'win-unpacked', '.android', '.m2']);
+async function buildFileIndex() {
+  if (fidx.building) return fidx.building;
+  fidx.building = (async () => {
+    const home = os.homedir(), roots = new Set();
+    try { for (const e of await fs.promises.readdir(home, { withFileTypes: true })) if (e.isDirectory() && !/^[.$]/.test(e.name) && !SKIP_DIR.has(e.name.toLowerCase())) roots.add(path.join(home, e.name)); } catch (_) {}
+    for (const k of ['desktop', 'documents', 'downloads', 'pictures', 'videos', 'music']) { try { roots.add(app.getPath(k)); } catch (_) {} }
+    if (process.env.OneDrive) roots.add(process.env.OneDrive);
+    const out = [], seen = new Set(), MAX = 120000;
+    const walk = async (dir, depth) => {
+      if (out.length >= MAX || depth > 7) return;
+      let ents; try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (_) { return; }
+      for (const e of ents) {
+        if (out.length >= MAX) return;
+        if (/^[.~$]/.test(e.name) || /\.(tmp|crdownload|part|lnk~)$/i.test(e.name)) continue;
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (SKIP_DIR.has(e.name.toLowerCase())) continue; out.push({ n: e.name, p, d: 1 }); await walk(p, depth + 1); }
+        else if (e.isFile()) out.push({ n: e.name, p, d: 0 });
+      }
+    };
+    for (const r of roots) { const k = r.toLowerCase(); if (seen.has(k)) continue; seen.add(k); await walk(r, 0); }
+    fidx.list = out; fidx.at = Date.now(); fidx.building = null;
+    return out;
+  })();
+  return fidx.building;
+}
+const fnorm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+async function recentFiles(limit = 12) {
+  const dir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Recent');
+  let ents = []; try { ents = await fs.promises.readdir(dir); } catch (_) { return []; }
+  const lnks = [];
+  for (const n of ents) { if (!/\.lnk$/i.test(n)) continue; try { lnks.push({ f: path.join(dir, n), t: (await fs.promises.stat(path.join(dir, n))).mtimeMs }); } catch (_) {} }
+  lnks.sort((a, b) => b.t - a.t);
+  const out = [];
+  for (const l of lnks) {
+    if (out.length >= limit) break;
+    let target = ''; try { target = shell.readShortcutLink(l.f).target; } catch (_) {}
+    if (!target || !fs.existsSync(target) || out.some(o => o.p === target)) continue;
+    let d = 0; try { d = fs.statSync(target).isDirectory() ? 1 : 0; } catch (_) {}
+    out.push({ n: path.basename(target), p: target, d, t: l.t });
+  }
+  return out;
+}
+async function searchFiles(q, limit = 8) {
+  q = fnorm(q).trim(); if (q.length < 2) return [];
+  if (!fidx.list.length || Date.now() - fidx.at > 15 * 60e3) { const b = buildFileIndex(); if (!fidx.list.length) await b; }
+  const words = q.split(/\s+/).filter(Boolean), recent = new Map((await recentFiles(40)).map((r, i) => [r.p.toLowerCase(), 40 - i]));
+  const scored = [];
+  for (const f of fidx.list) {
+    const n = fnorm(f.n);
+    if (!words.every(w => n.includes(w))) continue;
+    const base = n.replace(/\.[^.]+$/, '');
+    let s = base === q ? 100 : base.startsWith(q) ? 85 : n.split(/[\s\-_.()]+/).some(w => w.startsWith(words[0])) ? 70 : 50;
+    s += recent.get(f.p.toLowerCase()) || 0;          // abertos há pouco sobem
+    s -= Math.min(15, f.p.split(/[\\/]/).length);     // mais perto da raiz sobe
+    if (f.d) s -= 3;
+    scored.push({ ...f, s });
+  }
+  scored.sort((a, b) => b.s - a.s);
+  return scored.slice(0, limit);
 }
 
 // ---------- agenda (link iCal do Google Agenda ou do Outlook) ----------
@@ -993,9 +1171,15 @@ function setupIpc() {
   ipcMain.handle('update:get', () => upd);
   ipcMain.handle('native:last', () => Object.values(nativeLast));
   // conectar / desconectar o Claude Code
-  ipcMain.handle('claudeHooks', (_, action) => {
-    try { return action === 'connect' ? claudeConnect() : action === 'disconnect' ? claudeDisconnect() : claudeHooksStatus(); }
-    catch (e) { return { ok: false, error: e.message }; }
+  ipcMain.handle('claudeHooks', async (_, action) => {
+    try {
+      if (action === 'connect') return claudeConnect();
+      if (action === 'connect:ps') return claudeConnect('ps');
+      if (action === 'connect:bash') return claudeConnect('bash');
+      if (action === 'disconnect') return claudeDisconnect();
+      if (action === 'test') return await claudeTest();
+      return claudeHooksStatus();
+    } catch (e) { return { ok: false, error: e.message }; }
   });
   ipcMain.on('update:install', () => { if (upd.state === 'ready' && updater) { app.isQuitting = true; updater.quitAndInstall(true, true); } });
   // notificações do Windows
@@ -1005,6 +1189,10 @@ function setupIpc() {
   ipcMain.handle('apps:icon', async (_, aumid) => { const a = (apps.list || []).find(x => x.aumid === aumid); return a ? appIcon(a) : ''; });
   ipcMain.on('apps:launch', (_, aumid) => { if ((apps.list || []).some(x => x.aumid === aumid)) openApp(aumid); });
   ipcMain.handle('fx', (_, { from, to }) => fxRate(from, to));
+  ipcMain.handle('files:search', (_, q) => searchFiles(String(q || '').slice(0, 120)));
+  ipcMain.handle('files:recent', () => recentFiles(8));
+  ipcMain.on('ocr:capture', () => ocrCapture());
+  ipcMain.on('ocr:file', (_, p) => { p = String(p || ''); if (/\.(png|jpe?g|bmp|gif|tiff?)$/i.test(p) && fs.existsSync(p)) ocrFile(p, 'file'); });
   ipcMain.on('websearch', (_, q) => { q = String(q || '').slice(0, 500); if (q.trim()) shell.openExternal('https://www.google.com/search?q=' + encodeURIComponent(q)); });
 }
 
@@ -1029,6 +1217,12 @@ app.whenReady().then(() => {
   loadCfg();
   if (!cfg.claudeKey) { cfg.claudeKey = require('crypto').randomBytes(18).toString('base64url'); try { fs.writeFileSync(cfgFile(), JSON.stringify(cfg, null, 2)); } catch (_) {} }
   writeClaudeKey();
+  // 1.8.2: quem conectou no modo antigo (curl pelo Git Bash) passa para o modo PowerShell, que funciona em qualquer PC.
+  // Só mexe nos hooks da própria Ilha, uma vez, e guarda a cópia em settings.json.ilha-backup.
+  if (!cfg.hooksPsMigrated) {
+    try { const s = claudeHooksStatus(); if (s.ok && s.connected && s.style === 'bash') claudeConnect('ps'); } catch (_) {}
+    cfg.hooksPsMigrated = true; saveCfg();
+  }
   // versão instalada: regrava o "iniciar com o Windows" apontando para o .exe instalado
   if (app.isPackaged && cfg.startup) app.setLoginItemSettings({ openAtLogin: true });
   createWindow();
@@ -1046,6 +1240,9 @@ app.whenReady().then(() => {
   setTimeout(ghLoop, 15000);
   setupUpdater();
   setTimeout(loadApps, 20000); // a lista de apps fica pronta antes da primeira busca
+  setTimeout(buildFileIndex, 45000); // e a lista de arquivos também (em segundo plano)
+  setInterval(() => { if (Date.now() - fidx.at > 30 * 60e3) buildFileIndex(); }, 10 * 60e3);
+  globalShortcut.register('Control+Alt+T', () => ocrCapture()); // copiar texto de um print
   globalShortcut.register('Control+Alt+P', () => takePrint());
   shEvents();
   globalShortcut.register('Control+Alt+Space', () => send('toggle'));

@@ -1718,6 +1718,7 @@ function openCmd(initial = '') {
   setTimeout(() => { cmdIn.focus(); cmdIn.setSelectionRange(cmdIn.value.length, cmdIn.value.length); }, 30);
   cmdUpdate();
   loadAppList();
+  window.ilha.filesRecent().then(r => { recentCache = r || []; if (S.cmd && !cmdIn.value) cmdUpdate(); }).catch(() => {});
 }
 function closeCmd() {
   if (!S.cmd) return;
@@ -1821,6 +1822,8 @@ function ilhaActions(q, raw) {
   }, 'nota');
   const acts = [
     [['print', 'captura', 'recortar tela', 'screenshot'], 'Print de uma área da tela', 'Vai direto para a prateleira', IC2.shot, () => { closeCmd(); window.ilha.print(); }, 'print'],
+    [['texto do print', 'copiar texto', 'ocr', 'ler texto', 'texto da tela', 'extrair texto'], 'Copiar texto de um print', 'Recorte a área e o texto vai para a área de transferência · Ctrl+Alt+T', '<svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M9 9h6M12 9v7"/></svg>', () => { closeCmd(); window.ilha.ocrCapture(); }, 'ocr'],
+    ...((() => { const img = [...(S.cfg.shelf || [])].reverse().find(p => /\.(png|jpe?g|bmp|gif)$/i.test(p)); return img ? [[['texto da imagem', 'texto da prateleira', 'ocr ultima', 'copiar texto imagem'], 'Copiar texto da última imagem da prateleira', img.split(/[\\/]/).pop(), IC2.shot, () => { closeCmd(); window.ilha.ocrFile(img); }, 'ocrshelf']] : []; })()),
     [['teste de internet', 'velocidade', 'speedtest'], 'Testar a velocidade da internet', 'Aba Internet', IC.gauge, () => { goTab('net'); if (!S.speed.running) window.ilha.speedStart(); }, 'speed'],
     [['mudo', 'silenciar som', 'mutar'], 'Silenciar o som', 'Liga ou desliga o mudo do Windows', '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>', () => { closeCmd(); window.ilha.media('mute'); }, 'mute'],
     [['microfone', 'silenciar microfone', 'mic'], 'Silenciar o microfone', 'Liga ou desliga o microfone', IC2.mic, () => { closeCmd(); window.ilha.media('micmute'); toast(S.av?.micMuted ? 'Microfone ativado' : 'Microfone silenciado'); }, 'mic'],
@@ -1853,11 +1856,117 @@ function favItems(q) {
   return out;
 }
 
+/* --- arquivos, área de transferência e emojis --- */
+const FILE_IC = {
+  doc: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>',
+  dir: '<svg viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.3l2 2h8.7A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>',
+  clip: '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h4"/></svg>',
+};
+const fileIcons = new Map();
+let recentCache = [];
+const shortDir = p => { const d = p.replace(/[\\/][^\\/]+$/, ''); const home = d.match(/^[A-Z]:\\Users\\[^\\]+/i)?.[0]; return (home ? '~' + d.slice(home.length) : d) || d; };
+function fileItem(f, bonus = 0) {
+  const key = 'file:' + f.p;
+  return { score: (f.s || 60) + bonus + boost(key), title: f.n, sub: `${f.d ? 'Pasta' : 'Arquivo'} · ${shortDir(f.p)} · Ctrl+Enter mostra na pasta`, key, path: f.p,
+    icon: fileIcons.get(f.p) ? `<img src="${fileIcons.get(f.p)}" alt="">` : f.d ? FILE_IC.dir : FILE_IC.doc,
+    run: () => { used(key); closeCmd(); window.ilha.openPath(f.p); }, alt: () => { used(key); closeCmd(); window.ilha.reveal(f.p); } };
+}
+function clipItems(q, max, score) {
+  const out = [];
+  for (const c of clips) {
+    if (out.length >= max) break;
+    const one = c.text.trim().replace(/\s+/g, ' ');
+    if (q && !norm(one).includes(q)) continue;
+    out.push({ score, title: one.slice(0, 90), sub: `Copiado ${ago(c.at)} · Enter copia de novo`, icon: FILE_IC.clip, run: () => { window.ilha.copy(c.text); closeCmd(); toast('Copiado'); } });
+  }
+  return out;
+}
+// emojis com palavras em português (e algumas em inglês)
+const EMOJI = [
+  ['😀', 'sorriso feliz rindo smile'], ['😂', 'chorando de rir risada kkk lol'], ['🤣', 'rolando de rir kkkk'], ['😊', 'sorriso fofo corado'], ['😍', 'apaixonado olhos coracao amor'], ['🥰', 'amor carinho coracoes'], ['😘', 'beijo kiss'], ['😉', 'piscadela piscando'],
+  ['😎', 'oculos legal top cool'], ['🤔', 'pensando hmm duvida'], ['🙄', 'revirando olhos tedio'], ['😅', 'suor nervoso ufa'], ['😭', 'chorando choro triste'], ['😢', 'triste lagrima'], ['😡', 'bravo raiva irritado'], ['🤯', 'mente explodindo chocado'],
+  ['😱', 'grito medo susto'], ['😴', 'dormindo sono zzz'], ['🤗', 'abraco'], ['🤩', 'estrelas encantado uau'], ['🥳', 'festa comemorando aniversario'], ['😬', 'careta tenso ops'], ['🤐', 'boca fechada segredo'], ['🤫', 'silencio shh'],
+  ['🥲', 'sorriso triste emocionado'], ['😏', 'sarcastico malicioso'], ['🙃', 'de cabeca para baixo ironia'], ['😇', 'anjo inocente'], ['🤡', 'palhaco'], ['💀', 'caveira morri morto'], ['👻', 'fantasma'], ['🤖', 'robo robot'],
+  ['👍', 'joinha positivo ok like curti'], ['👎', 'negativo nao deslike'], ['👏', 'palmas aplausos parabens'], ['🙏', 'por favor obrigado reza maos'], ['💪', 'forca musculo forte'], ['👋', 'tchau oi aceno mao'], ['🤝', 'aperto de mao acordo'], ['✌️', 'paz vitoria'],
+  ['🤞', 'dedos cruzados sorte'], ['👌', 'ok perfeito'], ['👉', 'apontando direita'], ['👀', 'olhos olhando de olho'], ['🧠', 'cerebro inteligente'], ['🫶', 'coracao maos amor'], ['🙌', 'maos para cima viva'], ['🤙', 'liga ai hang loose'],
+  ['❤️', 'coracao vermelho amor love'], ['🧡', 'coracao laranja'], ['💛', 'coracao amarelo'], ['💚', 'coracao verde'], ['💙', 'coracao azul'], ['💜', 'coracao roxo'], ['🖤', 'coracao preto'], ['🤍', 'coracao branco'],
+  ['💔', 'coracao partido'], ['💯', 'cem 100 perfeito'], ['🔥', 'fogo top quente fire'], ['✨', 'brilho estrelas magia'], ['⭐', 'estrela favorito'], ['🌟', 'estrela brilhante'], ['⚡', 'raio energia rapido'], ['💥', 'explosao boom'],
+  ['🎉', 'festa confete parabens comemorar'], ['🎊', 'confete bola'], ['🎁', 'presente gift'], ['🎂', 'bolo aniversario'], ['🏆', 'trofeu campeao vitoria'], ['🥇', 'medalha ouro primeiro'], ['⚽', 'futebol bola gol'], ['🎮', 'videogame jogo game controle'],
+  ['🎵', 'musica nota'], ['🎧', 'fone musica'], ['📷', 'camera foto'], ['🎬', 'filme cinema'], ['📺', 'tv televisao'], ['💻', 'notebook computador laptop'], ['🖥️', 'computador monitor pc'], ['📱', 'celular telefone'],
+  ['⌨️', 'teclado'], ['🖱️', 'mouse'], ['💾', 'disquete salvar'], ['📁', 'pasta'], ['📄', 'documento pagina'], ['📝', 'nota anotacao escrever'], ['📌', 'alfinete fixar'], ['📎', 'clipe anexo'],
+  ['📅', 'calendario data agenda'], ['⏰', 'despertador alarme'], ['⌛', 'ampulheta tempo esperando'], ['🔔', 'sino notificacao'], ['🔒', 'cadeado seguro senha'], ['🔑', 'chave'], ['💡', 'ideia lampada'], ['🔧', 'ferramenta chave inglesa conserto'],
+  ['🐛', 'bug inseto'], ['🚀', 'foguete lancamento deploy rapido'], ['✅', 'certo feito ok check'], ['❌', 'errado x nao erro'], ['⚠️', 'atencao cuidado aviso'], ['❓', 'pergunta interrogacao'], ['❗', 'exclamacao importante'], ['➡️', 'seta direita'],
+  ['💰', 'dinheiro saco grana'], ['💵', 'dinheiro dolar nota'], ['💳', 'cartao credito'], ['📈', 'grafico subindo alta'], ['📉', 'grafico caindo baixa'], ['🛒', 'carrinho compras mercado'], ['🏠', 'casa lar'], ['🏢', 'empresa escritorio predio'],
+  ['☀️', 'sol calor'], ['🌙', 'lua noite'], ['🌧️', 'chuva'], ['❄️', 'neve frio'], ['🌈', 'arco iris'], ['🌊', 'onda mar praia'], ['🌱', 'planta broto'], ['🌸', 'flor cerejeira'],
+  ['🐶', 'cachorro cao dog'], ['🐱', 'gato cat'], ['🐼', 'panda'], ['🦄', 'unicornio'], ['🐸', 'sapo'], ['🦋', 'borboleta'], ['🐝', 'abelha'], ['🐟', 'peixe'],
+  ['🍕', 'pizza'], ['🍔', 'hamburguer lanche'], ['🍟', 'batata frita'], ['🍫', 'chocolate'], ['🍺', 'cerveja'], ['🍷', 'vinho'], ['☕', 'cafe'], ['🍿', 'pipoca'],
+  ['🇧🇷', 'brasil bandeira'], ['🇺🇸', 'estados unidos eua bandeira'], ['🇵🇹', 'portugal bandeira'], ['🚗', 'carro'], ['✈️', 'aviao viagem'], ['🏖️', 'praia ferias'], ['🙈', 'macaco nao vejo vergonha'], ['🫠', 'derretendo'],
+];
+function emojiItems(q) {
+  const words = q.split(/\s+/).filter(Boolean);
+  // o nome principal (1ª palavra) vale mais: "cora" mostra os corações antes do 😊 "corado"
+  const rank = k => { const ks = k.split(' '); return words.reduce((s, w) => s + (ks[0] === w ? 3 : ks[0].startsWith(w) ? 2 : 1), 0); };
+  return EMOJI.filter(([, k]) => words.every(w => k.split(' ').some(x => x.startsWith(w))))
+    .map((x, i) => [...x, words.length ? rank(x[1]) : 0, i]).sort((a, b) => b[2] - a[2] || a[3] - b[3]).slice(0, 6)
+    .map(([e, k]) => ({ title: k.split(' ').slice(0, 2).join(' '), sub: 'Enter copia o emoji', icon: `<span class="cmd-emoji">${e}</span>`, run: () => { window.ilha.copy(e); closeCmd(); toast(`${e} copiado: cole com Ctrl+V`); } }));
+}
+// modos com prefixo: "arq relatório", "clip senha", "emoji fogo" (ou ":fogo")
+function cmdMode(raw) {
+  const m = /^\s*(arq|arquivo|arquivos)\s+(.*)$/i.exec(raw); if (m) return { kind: 'files', q: m[2] };
+  const c = /^\s*(clip|copiado|copiados|copiei)(?:\s+(.*))?$/i.exec(raw); if (c) return { kind: 'clip', q: c[2] || '' };
+  const e = /^\s*(?:emoji|emojis)(?:\s+(.*))?$|^\s*:(\S*)$/i.exec(raw); if (e) return { kind: 'emoji', q: e[1] ?? e[2] ?? '' };
+  return null;
+}
+function cmdModeUpdate(mode, seq) {
+  const q = norm(mode.q);
+  let items = [];
+  if (mode.kind === 'clip') {
+    items = clipItems(q, 6, 0);
+    if (!items.length) items = [{ title: q ? 'Nada copiado com esse texto' : 'Nada copiado ainda', sub: 'O que você copiar aparece aqui', icon: FILE_IC.clip, run: () => {} }];
+  } else if (mode.kind === 'emoji') {
+    items = emojiItems(q);
+    if (!items.length) items = [{ title: 'Nenhum emoji com esse nome', sub: 'Tente: fogo, coração, rindo, festa, ok…', icon: '<span class="cmd-emoji">🤔</span>', run: () => {} }];
+  } else {
+    items = q.length < 2 ? recentCache.slice(0, 6).map(f => ({ ...fileItem(f), sub: `Aberto há pouco · ${shortDir(f.p)}` }))
+      : [{ title: 'Procurando…', sub: 'Nas suas pastas', icon: IC3.search, run: () => {} }];
+    if (q.length >= 2) window.ilha.filesSearch(mode.q).then(list => {
+      if (!S.cmd || S.cmd.seq !== seq) return;
+      S.cmd.items = list.length ? list.slice(0, 6).map(f => fileItem(f)) : [{ title: 'Nenhum arquivo com esse nome', sub: 'Procura em Área de Trabalho, Documentos, Downloads, Imagens e nas suas pastas', icon: FILE_IC.doc, run: () => {} }];
+      S.cmd.sel = 0; drawCmd(); loadRowIcons();
+    });
+  }
+  S.cmd.items = items.slice(0, 6); S.cmd.sel = 0;
+  drawCmd(); loadRowIcons();
+}
+// ícones de apps e arquivos chegam depois e entram na linha certa
+function loadRowIcons() {
+  if (!S.cmd) return;
+  for (const it of S.cmd.items) {
+    if (it.aumid && it.hasIcon && !appIcons.has(it.aumid)) {
+      appIcons.set(it.aumid, '');
+      window.ilha.appIcon(it.aumid).then(ic => { appIcons.set(it.aumid, ic || ''); if (ic && S.cmd) { const row = cmdList.querySelector(`[data-aumid="${CSS.escape(it.aumid)}"] .cmd-ic`); if (row) row.innerHTML = `<img src="${ic}" alt="">`; } });
+    }
+    if (it.path && !fileIcons.has(it.path)) {
+      fileIcons.set(it.path, '');
+      window.ilha.fileInfo([it.path]).then(([inf]) => { if (inf?.icon) { fileIcons.set(it.path, inf.icon); const row = cmdList.querySelector(`[data-path="${CSS.escape(it.path)}"] .cmd-ic`); if (row) row.innerHTML = `<img src="${inf.icon}" alt="">`; } }).catch(() => {});
+    }
+  }
+}
+// copiar texto de um print: aviso de quando está lendo e do resultado
+window.ilha.onOcr(m => {
+  if (m.state === 'reading') notice('shot', '#64d2ff', 'Lendo o texto…', '', 6000);
+  else if (m.state === 'done') notice('shot', '#30d158', 'Texto copiado', `${m.lines} linha${m.lines > 1 ? 's' : ''} · ${m.preview}`, 4500);
+  else if (m.state === 'empty') notice('shot', '#ff9f0a', 'Nenhum texto encontrado', 'Tente recortar mais perto do texto', 3500);
+  else notice('shot', '#ff453a', 'Não consegui ler', m.error || '', 4000);
+});
+
 function cmdUpdate() {
   if (!S.cmd) return;
   const raw = cmdIn.value, q = norm(raw);
   const seq = ++S.cmd.seq;
-  let items = [];
+  const mode = cmdMode(raw);
+  if (mode) return cmdModeUpdate(mode, seq);
+  let items = [], compose = null;
   if (q) {
     const v = calc(raw);
     if (v != null) items.push({ score: 200, title: `= ${fmtN(v)}`, sub: `${raw.trim()} · Enter copia`, icon: IC3.calc, cls: 'big', run: () => { window.ilha.copy(String(+v.toPrecision(12)).replace('.', ',')); closeCmd(); toast('Resultado copiado'); } });
@@ -1878,34 +1987,45 @@ function cmdUpdate() {
     }
     const pool = [...ilhaActions(q, raw), ...favItems(q)];
     for (const a of appsCache || []) { const sc = fuzzy(a.name, q); if (sc) pool.push(appItem(a, sc)); }
-    pool.sort((x, y) => y.score - x.score);
-    items.push(...pool.slice(0, 6 - Math.min(items.length, 2) - 1));
+    if (q.length >= 3) pool.push(...clipItems(q, 2, 34)); // algo que você copiou com esse texto
+    const tail = [];
     if (/^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i.test(raw.trim()) && !/^\d+([.,]\d+)*$/.test(raw.trim())) {
       const url = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : 'https://' + raw.trim();
-      items.push({ score: 0, title: `Abrir ${raw.trim()}`, sub: 'Site', icon: IC3.globe, run: () => { closeCmd(); window.ilha.open(url); } });
+      tail.push({ score: 0, title: `Abrir ${raw.trim()}`, sub: 'Site', icon: IC3.globe, run: () => { closeCmd(); window.ilha.open(url); } });
     }
-    items.push({ score: -1, title: `Pesquisar “${raw.trim()}”`, sub: 'No Google', icon: IC3.search, run: () => { closeCmd(); window.ilha.webSearch(raw.trim()); } });
+    tail.push({ score: -1, title: `Pesquisar “${raw.trim()}”`, sub: 'No Google', icon: IC3.search, run: () => { closeCmd(); window.ilha.webSearch(raw.trim()); } });
+    const head = items;
+    compose = extra => {
+      const p = [...pool, ...extra].sort((x, y) => y.score - x.score);
+      return [...head, ...p.slice(0, Math.max(1, 6 - Math.min(head.length, 2) - tail.length)), ...tail].slice(0, 6);
+    };
+    items = compose([]);
   } else {
-    // vazio: sugestões rápidas (as mais usadas primeiro)
+    // vazio: sugestões rápidas (as mais usadas primeiro) e os arquivos abertos há pouco
     const top = Object.entries(useCount).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-    for (const k of top.slice(0, 4)) {
+    for (const k of top) {
+      if (items.length >= 3) break;
       if (k.startsWith('app:')) { const a = (appsCache || []).find(x => 'app:' + x.aumid === k); if (a) items.push({ ...appItem(a, 0), sub: 'Usado há pouco' }); }
     }
-    if (!items.length) items.push({ title: 'Digite para procurar', sub: 'Apps · contas (12*3,5) · 100 usd em brl · 5 km em mi · timer 10 · nota comprar pão', icon: IC3.bolt, run: () => {} });
+    for (const f of recentCache.slice(0, 6 - items.length - 1)) items.push({ ...fileItem(f), sub: `Aberto há pouco · ${shortDir(f.p)}` });
+    items.push({ title: 'Dicas', sub: 'arq nome · clip texto · emoji fogo · 12*3,5 · 100 usd em brl · timer 10 · texto do print', icon: IC3.bolt, run: () => {} });
   }
   S.cmd.items = items.slice(0, 6);
   S.cmd.sel = 0;
-  drawCmd();
-  // ícones dos apps chegam depois
-  for (const it of S.cmd.items) if (it.aumid && it.hasIcon && !appIcons.has(it.aumid)) {
-    appIcons.set(it.aumid, '');
-    window.ilha.appIcon(it.aumid).then(ic => { appIcons.set(it.aumid, ic || ''); if (ic && S.cmd) { const row = cmdList.querySelector(`[data-aumid="${CSS.escape(it.aumid)}"] .cmd-ic`); if (row) row.innerHTML = `<img src="${ic}" alt="">`; } });
-  }
+  drawCmd(); loadRowIcons();
+  // arquivos com esse nome chegam depois e entram na lista conforme a pontuação
+  if (compose && q.length >= 3) window.ilha.filesSearch(raw).then(list => {
+    if (!S.cmd || S.cmd.seq !== seq || !list.length) return;
+    const cur = S.cmd.items[S.cmd.sel];
+    S.cmd.items = compose(list.slice(0, 4).map(f => fileItem(f, -24)));
+    S.cmd.sel = Math.max(0, S.cmd.items.indexOf(cur));
+    drawCmd(); loadRowIcons();
+  });
 }
 function drawCmd() {
   if (!S.cmd) return;
   const { items, sel } = S.cmd;
-  cmdList.innerHTML = items.map((it, i) => `<button class="cmd-row${i === sel ? ' on' : ''}${it.cls ? ' ' + it.cls : ''}" data-i="${i}"${it.aumid ? ` data-aumid="${esc(it.aumid)}"` : ''}><span class="cmd-ic">${it.icon || ''}</span><span class="cmd-t"><b>${esc(it.title)}</b><small>${esc(it.sub || '')}</small></span>${i === sel ? '<kbd>Enter</kbd>' : ''}</button>`).join('');
+  cmdList.innerHTML = items.map((it, i) => `<button class="cmd-row${i === sel ? ' on' : ''}${it.cls ? ' ' + it.cls : ''}" data-i="${i}"${it.aumid ? ` data-aumid="${esc(it.aumid)}"` : ''}${it.path ? ` data-path="${esc(it.path)}"` : ''}><span class="cmd-ic">${it.icon || ''}</span><span class="cmd-t"><b>${esc(it.title)}</b><small>${esc(it.sub || '')}</small></span>${i === sel ? '<kbd>Enter</kbd>' : ''}</button>`).join('');
   render();
 }
 function cmdSel(i) {
@@ -1917,7 +2037,7 @@ cmdIn.addEventListener('input', cmdUpdate);
 cmdIn.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown') { e.preventDefault(); cmdSel(S.cmd.sel + 1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); cmdSel(S.cmd.sel - 1); }
-  else if (e.key === 'Enter') { e.preventDefault(); S.cmd?.items[S.cmd.sel]?.run(); }
+  else if (e.key === 'Enter') { e.preventDefault(); const it = S.cmd?.items[S.cmd.sel]; if ((e.ctrlKey || e.shiftKey) && it?.alt) it.alt(); else it?.run(); }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCmd(); }
 });
 cmdList.addEventListener('mousemove', e => { const r = e.target.closest('.cmd-row'); if (r && +r.dataset.i !== S.cmd?.sel) cmdSel(+r.dataset.i); });
@@ -1929,10 +2049,44 @@ async function loadHooks() { S.hooks = await window.ilha.claudeHooks('status'); 
 function renderHooks() {
   const h = S.hooks || {}, sub = $('#hooks-sub'), b = $('#hooks-btn');
   if (!h.ok) { sub.textContent = h.error || 'Não consegui ler a configuração do Claude Code'; b.textContent = 'Tentar de novo'; b.classList.remove('go'); }
-  else if (h.connected) { sub.textContent = h.statusLine === 'other' ? 'Conectado · sem uso do plano (você já tem outra linha de status)' : 'Conectado · avisos, permissões e uso'; b.textContent = 'Desconectar'; b.classList.remove('go'); }
+  else if (h.connected) {
+    sub.textContent = h.lastOk ? `Conectado · último sinal ${ago(h.lastOk)}` : 'Conectado · nenhum sinal do Claude ainda (use Testar)';
+    if (h.statusLine === 'other') sub.textContent += ' · sem uso do plano';
+    b.textContent = 'Desconectar'; b.classList.remove('go');
+  }
   else { sub.textContent = h.partial ? 'Conectado pela metade: clique para completar' : 'Avisos, Permitir/Negar e uso do plano na ilha'; b.textContent = 'Conectar'; b.classList.add('go'); }
+  $('#hooks-test').hidden = !(h.ok && h.connected);
   $('#cl-now').classList.toggle('disconnected', !!h.ok && !h.connected);
 }
+// teste: roda o hook como o Claude rodaria e explica onde está o problema
+const CL_IC = `<span class="a-ico-blue" style="background:rgba(217,119,87,.2);color:#d97757">${NOTE_IC.claude}</span>`;
+async function hooksTest() {
+  const tb = $('#hooks-test'); tb.disabled = true; tb.textContent = 'Testando…';
+  const r = await window.ilha.claudeHooks('test');
+  tb.disabled = false; tb.textContent = 'Testar';
+  S.hooks = r; renderHooks();
+  if (!r.ok) return toast(r.error);
+  const t = r.test || {};
+  if (t.reached) {
+    showAlert('A conexão funciona', r.lastOk ? `O teste chegou na Ilha, e o último sinal do Claude foi ${ago(r.lastOk)}.`
+      : 'O teste chegou na Ilha, mas o Claude ainda não mandou nada. Confira se a conversa do Claude roda neste PC (e não na nuvem) e feche e abra o Claude de novo.', CL_IC, { size: [600, 96], ms: 16000 });
+  } else if (t.badKey) {
+    showAlert('Chave corrigida', 'O aviso chegava com a chave errada. Já gravei a chave de novo: teste outra vez.', CL_IC, { size: [520, 84] });
+  } else if (r.style !== 'ps') {
+    const onde = t.bash && !t.ps ? 'Funciona pelo Git Bash, mas não pelo PowerShell (que o Claude pode estar usando).' : 'O comando não chegou na Ilha.';
+    showAlert('O teste não chegou na Ilha', `${onde} O modo PowerShell funciona em qualquer PC.`, CL_IC, {
+      size: [620, 84], ms: 20000,
+      buttons: [{ label: 'Agora não' }, { label: 'Usar PowerShell', cls: 'blue', fn: async () => {
+        S.hooks = await window.ilha.claudeHooks('connect:ps'); renderHooks();
+        const r2 = await window.ilha.claudeHooks('test'); S.hooks = r2; renderHooks();
+        toast(r2.test?.reached ? 'Funcionou! Feche e abra o Claude de novo' : 'Ainda não chegou. Me mande um print desta tela');
+      } }],
+    });
+  } else {
+    showAlert('O teste não chegou na Ilha', `O aviso não chegou${t.stderr ? ' (' + t.stderr + ')' : ''}. Algum antivírus pode estar bloqueando o PowerShell. Me mande um print desta tela.`, CL_IC, { size: [620, 84], ms: 20000 });
+  }
+}
+$('#hooks-test').addEventListener('click', hooksTest);
 async function hooksAction() {
   const action = !S.hooks?.ok ? 'status' : S.hooks.connected ? 'disconnect' : 'connect';
   const r = await window.ilha.claudeHooks(action);
