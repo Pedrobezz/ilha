@@ -35,14 +35,20 @@ function render() {
   let mode, size;
   if (S.alert) { mode = 'alerting'; size = S.alert.size || [400, 84]; }
   else if (S.open) { mode = 'expanded'; size = SIZES[S.tab]; }
-  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
+  else if (activity()) { const a = activity(); mode = 'compact'; size = [a === 'notice' ? 400 : a === 'claude' ? 380 : a === 'media' ? 380 : a === 'download' ? 340 : a === 'vol' ? 300 : a === 'speed' ? 290 : 270, a === 'claude' && S.cfg.mascot !== false ? 58 : 34]; }
   else { mode = 'collapsed'; size = COLLAPSED; }
   const walk = mode === 'compact' && activity() === 'claude' && S.cfg.mascot !== false; // mascote passeando embaixo do texto
   // avisos rápidos e o volume aparecem mesmo com janela maximizada
   const transient = mode === 'compact' && ['notice', 'vol'].includes(activity());
   const hidden = S.covered && (mode === 'collapsed' || mode === 'compact') && !transient;
   const float = S.cfg.islandStyle === 'float';
-  isl.className = mode + (hidden ? ' hidden-top' : '') + (float ? ' float' : '') + (S.cfg.islandColor === 'theme' ? ' themed' : '') + (walk ? ' walk' : '') + (isl.classList.contains('pulsing') ? ' pulsing' : '');
+  // ilha dividida: música tocando + outra atividade = pílula principal + bolinha com a capa ao lado
+  const split = mode === 'compact' && S.media?.has && S.media.playing && !['media', 'notice', 'vol'].includes(activity());
+  if (split) renderBubble();
+  const prevMode = S.mode; S.mode = mode;
+  isl.className = mode + (hidden ? ' hidden-top' : '') + (float ? ' float' : '') + (S.cfg.islandColor === 'theme' ? ' themed' : '') + (walk ? ' walk' : '') + (split ? ' split' : '')
+    + (isl.classList.contains('pulsing') ? ' pulsing' : '') + (mode === 'collapsed' && S.cfg.breathe !== false ? ' breathe' : '') + wxClass(mode);
+  if (prevMode && prevMode !== mode) liquid(prevMode, mode);
   isl.style.setProperty('--w', size[0] + 'px');
   isl.style.setProperty('--h', size[1] + 'px');
   S.size = size;
@@ -70,7 +76,9 @@ window.ilha.onHover(h => {
   S.hover = h;
   clearTimeout(openT); clearTimeout(closeT);
   // escondida, precisa "encostar" um instante na borda: uma passada rápida para clicar numa aba não abre
-  if (h) { if (S.alert) return; openT = setTimeout(() => open(), S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : 70); }
+  // com a música na ilha compacta, o mouse em cima da barra não abre o painel (dá para arrastar)
+  const mediaBar = !S.open && S.mode === 'compact' && activity() === 'media';
+  if (h) { if (S.alert) return; openT = setTimeout(() => { if (!S.onBar) open(); }, S.open ? 0 : isl.classList.contains('hidden-top') ? 260 : mediaBar ? 380 : 70); }
   else if (S.open && !S.focused) closeT = setTimeout(close, 380);
 });
 window.ilha.onBlur(() => { if (S.focused) { S.focused = false; window.ilha.focus(false); } if (!S.hover) close(); });
@@ -295,6 +303,7 @@ function tickMedia() {
   const pos = mediaPos(), end = m?.end || 0;
   $('.m-pos').textContent = fmtT(pos); $('.m-end').textContent = end ? '-' + fmtT(end - pos) : '0:00';
   $('.track i').style.width = end ? (100 * pos / end) + '%' : '0%';
+  if ($('#c-mid').dataset.ready) renderMiniBar();
 }
 setInterval(tickMedia, 1000);
 $$('[data-m]').forEach(b => b.addEventListener('click', () => {
@@ -350,6 +359,7 @@ const NOTE_IC = {
 function notice(icon, color, title, text, ms = 3600) {
   if (S.cfg.liveAlerts === false) return;
   S.notice = { icon, color, title, text, until: Date.now() + ms };
+  uiSound('notice');
   $('#compact .c-left').dataset.k = '';
   if (!S.open) { render(); clearTimeout(notice.t); notice.t = setTimeout(render, ms + 50); }
 }
@@ -360,8 +370,45 @@ const IC = {
   gauge: '<svg viewBox="0 0 24 24"><path d="M12 13.5 16.5 9"/><path d="M3.5 17a9 9 0 1 1 17 0"/></svg>',
   note: '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
 };
+/* ---- barra da música na ilha compacta: mostra o progresso e dá para arrastar para voltar/avançar ---- */
+function renderMiniBar() {
+  const mid = $('#c-mid');
+  if (!mid.dataset.ready) {
+    mid.innerHTML = '<span class="mb-t" id="mb-pos">0:00</span><div class="mbar" id="mbar"><i id="mb-fill"></i><b id="mb-knob"></b></div><span class="mb-t" id="mb-end">0:00</span>';
+    mid.dataset.ready = '1';
+    const bar = $('#mbar');
+    const frac = e => { const r = bar.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width, 0, 1); };
+    const show = f => { const end = S.media?.end || 0; $('#mb-fill').style.width = (f * 100) + '%'; $('#mb-knob').style.left = (f * 100) + '%'; $('#mb-pos').textContent = fmtT(f * end); $('#mb-end').textContent = '-' + fmtT(end - f * end); };
+    mid.addEventListener('pointerenter', () => { S.onBar = true; clearTimeout(openT); });
+    mid.addEventListener('pointerleave', () => { S.onBar = false; if (S.hover && !S.open && !S.dragBar) { clearTimeout(openT); openT = setTimeout(() => { if (!S.onBar) open(); }, 450); } });
+    bar.addEventListener('pointerdown', e => { if (!S.media?.end) return; S.dragBar = true; bar.setPointerCapture(e.pointerId); bar.classList.add('drag'); show(frac(e)); });
+    bar.addEventListener('pointermove', e => { if (S.dragBar) show(frac(e)); });
+    bar.addEventListener('pointerup', e => {
+      if (!S.dragBar) return;
+      S.dragBar = false; bar.classList.remove('drag');
+      const sec = Math.round(frac(e) * S.media.end);
+      window.ilha.media('seek ' + sec); S.media.pos = sec; S.media.at = Date.now(); tickMedia();
+    });
+  }
+  if (S.dragBar) return;
+  const end = S.media?.end || 0, pos = mediaPos(), f = end ? pos / end : 0;
+  $('#mb-fill').style.width = (f * 100) + '%'; $('#mb-knob').style.left = (f * 100) + '%';
+  $('#mb-pos').textContent = fmtT(pos); $('#mb-end').textContent = end ? '-' + fmtT(end - pos) : '';
+  $('#mbar').classList.toggle('na', !end);
+}
+
+/* ---- ilha dividida: bolinha com a capa da música ao lado da pílula principal ---- */
+function renderBubble() {
+  const b = $('#bubble'), art = S.media?.art;
+  const k = (art ? art.length : 0) + (S.media?.title || '');
+  if (b.dataset.k === k) return;
+  b.dataset.k = k;
+  b.innerHTML = art ? `<img src="${art}" alt="">` : `<span>${IC.note}</span>`;
+}
+
 function renderCompact() {
   const a = activity(), L = $('#compact .c-left'), R = $('#compact .c-right');
+  if (a !== 'media') { const mid = $('#c-mid'); if (mid.dataset.ready) { mid.innerHTML = ''; delete mid.dataset.ready; } }
   if (a === 'notice') {
     const n = S.notice;
     L.innerHTML = `<span class="c-ico" style="background:${n.color}33;color:${n.color}">${NOTE_IC[n.icon] || ''}</span><span style="color:${n.color}">${esc(n.title)}</span>`;
@@ -397,6 +444,7 @@ function renderCompact() {
     const k = 'media' + (art ? art.length : 0) + S.media.title;
     if (L.dataset.k !== k) { L.innerHTML = art ? `<img src="${art}" alt="">` : `<span class="c-ico" style="background:rgba(255,55,95,.22);color:#ff6482">${IC.note}</span>`; L.dataset.k = k; }
     if (R.dataset.k !== 'eq') { R.innerHTML = '<div class="eq on"><i></i><i></i><i></i><i></i></div>'; R.dataset.k = 'eq'; }
+    renderMiniBar();
     return;
   }
   R.dataset.k = '';
@@ -612,7 +660,7 @@ function claudeMsg(m) {
 window.ilha.onClaude(c => {
   if (S.cfg.liveAlerts === false) return;
   const where = c.project ? ` · ${c.project}` : '';
-  if (c.event === 'Stop') { notice('claude', CLAUDE_C, 'Claude', `Terminou${where}`, 5000); softChime(); return; }
+  if (c.event === 'Stop') { claudeCelebrate(c.project); softChime(); return; }
   const perm = c.type === 'permission_prompt' || /permission|approval/i.test(c.message);
   if (perm) {
     chime();
@@ -668,6 +716,7 @@ function renderClaude() {
   $('#cl-state').textContent = c.working ? 'Claude está trabalhando' : c.endedAt ? 'Claude terminou' : 'Claude';
   $('#cl-project').textContent = c.project ? `Projeto ${c.project}${c.active > 1 ? ` · ${c.active} sessões ativas` : ''}` : 'Sem atividade ainda';
   $('#cl-badge').textContent = c.working ? 'ao vivo' : 'parado';
+  card.classList.toggle('sleeping', !c.working && (!c.endedAt || Date.now() - c.endedAt > 10 * 60e3));
   $('#cl-activity').textContent = c.working ? (c.activity || 'Trabalhando…') : c.endedAt ? `Última tarefa terminou ${ago(c.endedAt)}.` : 'Quando você pedir algo ao Claude Code, aparece aqui o que ele está fazendo.';
   $('#cl-time').textContent = c.startedAt ? fmtDurS((c.working ? Date.now() : c.endedAt) - c.startedAt) : '–';
   $('#cl-ttask').textContent = c.startedAt ? fmtTok(c.tokensTask) : '–';
@@ -907,6 +956,10 @@ function fillSettings() {
   $('#set-ialpha').value = S.cfg.islandAlpha ?? 100; applyIAlpha(S.cfg.islandAlpha ?? 100);
   $('#set-ics').value = S.cfg.icsUrl || '';
   $('#set-pulse').checked = S.cfg.musicPulse !== false;
+  $('#set-breathe').checked = S.cfg.breathe !== false;
+  $('#set-sounds').checked = S.cfg.sounds !== false;
+  $('#set-lwx').checked = S.cfg.liveWeather !== false;
+  $('#set-confetti').checked = S.cfg.confetti !== false;
 }
 // estilo da ilha fechada: notch ou flutuante, preta ou do tema, e a opacidade
 function applyIAlpha(v) {
@@ -940,6 +993,7 @@ function applyGlass(t) {
 // temas: degradê no vidro + cor dos botões
 const THEMES = {
   grafite: { name: 'Grafite', g: null, a: ['#0a84ff', '#5e5ce6'] },
+  papel: { name: 'Papel de parede', g: null, a: ['#0a84ff', '#5e5ce6'] },
   'por-do-sol': { name: 'Pôr do sol', g: 'linear-gradient(120deg, #e8794a 0%, #b0688f 50%, #4a6ae8 100%)', a: ['#ff9f0a', '#5e5ce6'] },
   aurora: { name: 'Aurora', g: 'linear-gradient(120deg, #1fa67a 0%, #3a7bd5 55%, #8e44ad 100%)', a: ['#30d158', '#5e5ce6'] },
   oceano: { name: 'Oceano', g: 'linear-gradient(120deg, #0f4c81 0%, #1e88c7 50%, #2ec4b6 100%)', a: ['#64d2ff', '#0a84ff'] },
@@ -950,6 +1004,7 @@ const THEMES = {
 };
 function applyTheme(id) {
   const t = THEMES[id] || THEMES.grafite;
+  if (id === 'papel' && !t.g) wallpaperTheme(true); // cores do papel de parede ainda não lidas
   isl.style.setProperty('--theme', t.g || 'none');
   isl.style.setProperty('--acc1', t.a[0]); isl.style.setProperty('--acc2', t.a[1]);
   isl.style.setProperty('--accg', t.a[0] + 'b3');
@@ -1096,7 +1151,7 @@ Object.assign(NOTE_IC, { mic: IC2.mic, cam: IC2.cam, dl: IC2.dl, shot: IC2.shot,
 /* ---- Claude: Permitir / Negar direto na ilha ---- */
 window.ilha.onPerm(p => {
   chime();
-  showAlert('Claude quer permissão', `${p.title}${p.project ? ' · ' + p.project : ''}`, `<span style="color:${CLAUDE_C}">${NOTE_IC.claude}</span>`, {
+  showAlert('Claude quer permissão', `${p.title}${p.project ? ' · ' + p.project : ''}`, `<span class="mascot-mini think">${mascotSVG()}<em>?</em></span>`, {
     id: 'perm:' + p.id, code: p.detail && p.detail !== p.title ? p.detail : '', ms: 30000,
     buttons: [{ label: 'Negar', cls: 'deny', fn: () => window.ilha.permAnswer(p.id, false) }, { label: 'Permitir', cls: 'allow', fn: () => { window.ilha.permAnswer(p.id, true); toast('Permitido'); } }],
   });
@@ -1343,6 +1398,104 @@ $('#cl-gh').addEventListener('click', e => { const b = e.target.closest('[data-u
 onEnter($('#set-ics'), async () => { S.cfg = await window.ilha.setCfg({ icsUrl: $('#set-ics').value.trim() }); toast($('#set-ics').value.trim() ? 'Carregando a agenda…' : 'Agenda removida'); });
 $('#set-pulse').addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ musicPulse: e.target.checked }); syncPulse(); if (!e.target.checked) stopAudio(); });
 
+
+/* =================== versão 1.7: estética =================== */
+
+/* ---- mascote com humor ---- */
+function mascotSVG(mood) {
+  const eyes = mood === 'sleep' ? ['..OOOOOOO..', '..OOOOOOO..', 'OOOEEOEEOOO'] : ['..OOOOOOO..', '..OEOOOEO..', 'OOOEOOOEOOO'];
+  const body = [...eyes, '..OOOOOOO..', '..OOOOOOO..'];
+  const legs = mood === 'sleep' ? ['..O.O.O.O..', '..........'] : ['..O.O.O.O..', '..O.O.O.O..'];
+  const rects = (rows, y0) => rows.map((r, y) => [...r].map((ch, x) => ch === '.' ? '' : `<rect x="${x}" y="${y + y0}" width="1" height="1" fill="${ch === 'E' ? '#1a1410' : '#d97757'}"/>`).join('')).join('');
+  return `<svg viewBox="0 0 11 7.5" preserveAspectRatio="xMidYMax meet">${rects(body, 0)}${rects(legs, 5)}</svg>`;
+}
+NOTE_IC.mascotJump = `<span class="mascot-mini jump">${mascotSVG()}</span>`;
+// confete saindo de baixo da ilha
+function confetti(n = 34) {
+  const colors = ['#d97757', '#ffd60a', '#30d158', '#0a84ff', '#bf5af2', '#ff375f', '#64d2ff'];
+  const top = (S.size?.[1] || 34) + (S.cfg.islandStyle === 'float' ? FLOAT_GAP : 0) - 4;
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement('i');
+    c.className = 'confetti';
+    c.style.background = colors[i % colors.length];
+    c.style.top = top + 'px';
+    if (i % 3 === 0) c.style.borderRadius = '50%';
+    document.body.appendChild(c);
+    const dx = (Math.random() - .5) * 380, dy = 90 + Math.random() * 170, rot = (Math.random() - .5) * 900;
+    c.animate([
+      { transform: 'translate(-50%, 0) rotate(0deg)', opacity: 1 },
+      { transform: `translate(calc(-50% + ${dx * .6}px), ${dy * .35}px) rotate(${rot * .5}deg)`, opacity: 1, offset: .3 },
+      { transform: `translate(calc(-50% + ${dx}px), ${dy}px) rotate(${rot}deg)`, opacity: 0 },
+    ], { duration: 1500 + Math.random() * 700, easing: 'cubic-bezier(.2,.6,.4,1)' }).onfinish = () => c.remove();
+  }
+}
+function claudeCelebrate(project) {
+  notice('mascotJump', CLAUDE_C, 'Claude terminou', project ? `Tarefa pronta · ${project}` : 'Tarefa pronta', 4500);
+  if (S.cfg.confetti !== false) setTimeout(() => confetti(), 250);
+}
+
+/* ---- abrir "líquido": a ilha estica e quica como uma gota ---- */
+function liquid(prev, mode) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (mode === 'expanded') { isl.animate([{ scale: '1 1' }, { scale: '1.035 0.93' }, { scale: '0.99 1.025' }, { scale: '1 1' }], { duration: 680, easing: 'ease-out' }); uiSound('open'); }
+  else if (prev === 'expanded') { isl.animate([{ scale: '1 1' }, { scale: '0.95 1.08' }, { scale: '1.015 0.97' }, { scale: '1 1' }], { duration: 520, easing: 'ease-out' }); uiSound('close'); }
+  else if (mode === 'compact' || prev === 'compact') isl.animate([{ scale: '1 1' }, { scale: '1.04 0.9' }, { scale: '1 1' }], { duration: 420, easing: 'ease-out' });
+}
+
+/* ---- sons sutis estilo iOS ---- */
+let sndCtx = null;
+function uiSound(kind) {
+  if (S.cfg.sounds === false) return;
+  try {
+    sndCtx = sndCtx || new AudioContext();
+    const t = sndCtx.currentTime;
+    const notes = { open: [[740, 0], [1110, .05]], close: [[990, 0], [660, .05]], notice: [[1320, 0]] }[kind] || [];
+    for (const [f, d] of notes) {
+      const o = sndCtx.createOscillator(), g = sndCtx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t + d); g.gain.linearRampToValueAtTime(kind === 'notice' ? .05 : .035, t + d + .01);
+      g.gain.exponentialRampToValueAtTime(.0001, t + d + .18);
+      o.connect(g).connect(sndCtx.destination); o.start(t + d); o.stop(t + d + .2);
+    }
+  } catch (_) {}
+}
+
+/* ---- clima vivo na ilha fechada: chuva escorrendo, brilho do sol, estrelas à noite ---- */
+(function buildWx() {
+  let h = '';
+  for (let i = 0; i < 14; i++) h += `<i class="drop" style="left:${(i * 7.3 + Math.random() * 4).toFixed(1)}%;animation-delay:${(Math.random() * 1.4).toFixed(2)}s;animation-duration:${(0.9 + Math.random() * .6).toFixed(2)}s"></i>`;
+  for (let i = 0; i < 9; i++) h += `<i class="star" style="left:${(6 + i * 10.5 + Math.random() * 5).toFixed(1)}%;top:${(20 + Math.random() * 55).toFixed(0)}%;animation-delay:${(Math.random() * 3).toFixed(2)}s"></i>`;
+  h += '<i class="sunglow"></i>';
+  $('#wxfx').innerHTML = h;
+})();
+function wxClass(mode) {
+  if (S.cfg.liveWeather === false || !S.wx || (mode !== 'collapsed' && mode !== 'compact')) return '';
+  const c = S.wx.code, day = S.wx.day;
+  if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82) || c >= 95) return ' wx-rain';
+  if (day && c <= 1) return ' wx-sun';
+  if (!day && c <= 2) return ' wx-night';
+  return '';
+}
+
+/* ---- tema do papel de parede ---- */
+let wallT = 0;
+async function wallpaperTheme(force) {
+  if (!force && Date.now() - wallT < 10 * 60e3 && THEMES.papel.g) return;
+  wallT = Date.now();
+  const w = await window.ilha.wallpaper().catch(() => null);
+  if (!w) return;
+  THEMES.papel.g = `linear-gradient(120deg, ${w[0]} 0%, ${w[1]} 55%, ${w[2]} 100%)`;
+  THEMES.papel.a = [w[3], w[4]];
+  const sw = $('#set-theme .sw[data-theme="papel"]'); if (sw) sw.style.background = THEMES.papel.g;
+  if (S.cfg.theme === 'papel') applyTheme('papel');
+}
+setInterval(() => { if (S.cfg.theme === 'papel') wallpaperTheme(); }, 10 * 60e3);
+
+/* ---- ajustes novos ---- */
+for (const [id, key] of [['set-breathe', 'breathe'], ['set-sounds', 'sounds'], ['set-lwx', 'liveWeather'], ['set-confetti', 'confetti']]) {
+  $('#' + id).addEventListener('change', async e => { S.cfg = await window.ilha.setCfg({ [key]: e.target.checked }); render(); });
+}
+
 /* =================== início =================== */
 (async function init() {
   S.cfg = await window.ilha.getCfg();
@@ -1356,6 +1509,8 @@ $('#set-pulse').addEventListener('change', async e => { S.cfg = await window.ilh
   window.ilha.media('radios');
   renderDevRings();
   S.agenda = await window.ilha.agenda(); renderAgenda();
+  wallpaperTheme(true);
+  $('#mascot-sleep').innerHTML = mascotSVG('sleep') + '<span class="zzz"><i>z</i><i>z</i><i>Z</i></span>';
   renderHistory(S.cfg.speedHistory);
   renderFiles('shelf'); renderFiles('favs');
   setGauge(0, 0);

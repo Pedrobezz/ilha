@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('ilha', {
   print: () => ipcRenderer.send('print'),
   agenda: () => ipcRenderer.invoke('agenda'),
   peripherals: () => ipcRenderer.invoke('peripherals'),
+  wallpaper: () => ipcRenderer.invoke('wallpaper'),
   onPerm: on('claudePerm'), onPermClose: on('claudePermClose'), onBtBat: on('btbat'), onDownload: on('download'), onPrinted: on('printed'),
   onAgenda: on('agenda'), onAgendaAlert: on('agendaAlert'), onGhFail: on('ghfail'),
   onConn: on('conn'), onShLog: on('shlog'), onClaude: on('claude'), onClaudeState: on('claudeState'),

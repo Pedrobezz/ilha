@@ -13,10 +13,13 @@
   <div class="tint"></div>
   <div class="sheen"></div>
   <i class="pdot" id="pdot"></i>
+  <div class="bubble" id="bubble"></div>
+  <div class="wxfx" id="wxfx"></div>
 
   <!-- atividade ao vivo (ilha compacta) -->
   <div id="compact">
     <div class="c-left"></div>
+    <div class="c-mid" id="c-mid"></div>
     <div class="c-right"></div>
   </div>
 
@@ -206,7 +209,7 @@
         <div class="cl-grid">
           <div class="card cl-now r1" id="cl-now">
             <div class="cl-head"><span class="cl-logo"><svg viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7" stroke-width="2.6"/></svg></span><div><b id="cl-state">Claude</b><span id="cl-project">Sem atividade ainda</span></div><em class="cl-badge" id="cl-badge">parado</em></div>
-            <div class="lane cl-lane"><div class="mascot"></div></div>
+            <div class="lane cl-lane"><div class="mascot"></div><div class="mascot-sleep" id="mascot-sleep"></div></div>
             <div class="cl-activity" id="cl-activity">Quando você pedir algo ao Claude Code, aparece aqui o que ele está fazendo.</div>
             <div class="cl-today" id="cl-today"></div>
             <div class="cl-stats">
@@ -265,6 +268,10 @@
               <div class="row"><span class="ri" style="--c:linear-gradient(135deg,#3a3a3c,#000)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/></svg></span><span class="rt">Cor</span><div class="seg" id="set-icolor"><button data-v="black">Preta</button><button data-v="theme">Do tema</button></div></div>
               <div class="row"><span class="ri" style="--c:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span><span class="rt">Opacidade</span><div class="slide-wrap"><input type="range" class="slider" id="set-ialpha" min="30" max="100" step="1"><b id="set-ialpha-v">100%</b></div></div>
               <label class="row"><span class="ri" style="--c:linear-gradient(135deg,#ff375f,#ff9f0a)"><svg viewBox="0 0 24 24"><path d="M4 14v-4M8 18V6M12 15V9M16 20V4M20 14v-4"/></svg></span><span class="rt">Pulsar com a música</span><input type="checkbox" class="switch" id="set-pulse"></label>
+              <label class="row"><span class="ri" style="--c:#5e5ce6"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="2 3"/></svg></span><span class="rt">Respirar quando parada</span><input type="checkbox" class="switch" id="set-breathe"></label>
+              <label class="row"><span class="ri" style="--c:#64d2ff"><svg viewBox="0 0 24 24"><path d="M7 15a4 4 0 0 1 .5-8A5.5 5.5 0 0 1 18 8.5a3.5 3.5 0 0 1-.5 6.5"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5"/></svg></span><span class="rt">Clima vivo na ilha</span><input type="checkbox" class="switch" id="set-lwx"></label>
+              <label class="row"><span class="ri" style="--c:#d97757"><svg viewBox="0 0 24 24"><path d="M4 20 9 6l9 9z"/><path d="M14 4v2M19 8h2M17 5l1.5-1.5"/></svg></span><span class="rt">Confete quando o Claude termina</span><input type="checkbox" class="switch" id="set-confetti"></label>
+              <label class="row"><span class="ri" style="--c:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/></svg></span><span class="rt">Sons da ilha</span><input type="checkbox" class="switch" id="set-sounds"></label>
             </div>
           </div>
           <div class="set-col">

@@ -1,7 +1,7 @@
 {
   "name": "ilha",
   "productName": "Ilha",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Ilha dinâmica para o Windows, no topo da tela, estilo Apple",
   "main": "main.js",
   "scripts": {

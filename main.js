@@ -404,6 +404,25 @@ async function btBatteryLoop() {
   pushBatteries();
   setTimeout(btBatteryLoop, 25000);
 }
+// cores do papel de parede (para o tema "Papel de parede"): 3 tons para o degradê + 2 cores de destaque
+ipcMain.handle('wallpaper', () => {
+  const files = [path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Themes', 'TranscodedWallpaper')];
+  for (const file of files) {
+    try {
+      const img = nativeImage.createFromBuffer(fs.readFileSync(file)); if (img.isEmpty()) continue;
+      const sm = img.resize({ width: 48, quality: 'good' }), { width: w, height: h } = sm.getSize(), px = sm.toBitmap(); // BGRA
+      const avg = (x0, x1) => { let r = 0, g = 0, b = 0, n = 0; for (let y = 0; y < h; y++) for (let x = Math.floor(x0 * w); x < Math.floor(x1 * w); x++) { const i = (y * w + x) * 4; b += px[i]; g += px[i + 1]; r += px[i + 2]; n++; } return [r / n, g / n, b / n]; };
+      // cor mais viva da imagem para os botões
+      let best = [10, 132, 255], bs = -1;
+      for (let i = 0; i < px.length; i += 4) { const r = px[i + 2], g = px[i + 1], b = px[i], mx = Math.max(r, g, b), mn = Math.min(r, g, b), sc = (mx ? (mx - mn) / mx : 0) * mx; if (sc > bs) { bs = sc; best = [r, g, b]; } }
+      const hex = c => '#' + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+      const vivid = (c, k = 1.25) => { const m = (c[0] + c[1] + c[2]) / 3; return c.map(v => m + (v - m) * k + 18); };
+      const L = avg(0, .34), M = avg(.33, .67), Rr = avg(.66, 1);
+      return [hex(vivid(L)), hex(vivid(M)), hex(vivid(Rr)), hex(vivid(best, 1.1)), hex(vivid(Rr, 1.4))];
+    } catch (_) {}
+  }
+  return null;
+});
 ipcMain.handle('peripherals', () => { try { return JSON.parse(btLast || '[]'); } catch (_) { return []; } });
 
 // ---------- downloads ao vivo (Chrome/Edge: .crdownload, Firefox: .part) ----------
