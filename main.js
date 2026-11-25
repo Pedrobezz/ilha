@@ -151,6 +151,32 @@ async function shEvents() {
   if (shStream === ctrl) setTimeout(shEvents, 15000);
 }
 
+// ---------- avisos do Claude Code (hooks Stop / Notification) ----------
+// Servidor só em 127.0.0.1, exige a chave no cabeçalho x-ilha-key (páginas da web não conseguem mandar esse cabeçalho sem CORS)
+const CLAUDE_PORT = 47823;
+function claudeServer() {
+  const http = require('http');
+  const srv = http.createServer((req, res) => {
+    const end = (code, msg = '') => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(msg); };
+    if (req.method !== 'POST' || req.url !== '/claude') return end(404);
+    const key = String(req.headers['x-ilha-key'] || '');
+    if (!cfg.claudeKey || key.length !== cfg.claudeKey.length || !require('crypto').timingSafeEqual(Buffer.from(key), Buffer.from(cfg.claudeKey))) return end(401);
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > 256e3) req.destroy(); else chunks.push(c); });
+    req.on('end', () => {
+      let j = {}; try { j = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (_) {}
+      const ev = String(j.hook_event_name || '');
+      const project = j.cwd ? String(j.cwd).split(/[\\/]/).filter(Boolean).pop() || '' : '';
+      if (ev === 'Stop' || ev === 'Notification') {
+        send('claude', { event: ev, message: String(j.message || '').slice(0, 300), type: String(j.notification_type || ''), project, session: String(j.session_id || '').slice(0, 12) });
+      }
+      end(204);
+    });
+  });
+  srv.on('error', () => {}); // porta ocupada: só não recebe avisos
+  srv.listen(CLAUDE_PORT, '127.0.0.1');
+}
+
 // ---------- arquivos: ícones, abrir e arrastar para fora ----------
 async function fileInfo(p) {
   let isDir = false, exists = true;
@@ -392,6 +418,7 @@ function setupTray() {
 
 app.whenReady().then(() => {
   loadCfg();
+  if (!cfg.claudeKey) { cfg.claudeKey = require('crypto').randomBytes(18).toString('base64url'); saveCfg(); }
   // versão instalada: regrava o "iniciar com o Windows" apontando para o .exe instalado
   if (app.isPackaged && cfg.startup) app.setLoginItemSettings({ openAtLogin: true });
   createWindow();
@@ -402,6 +429,7 @@ app.whenReady().then(() => {
   clipLoop();
   setupTray();
   connLoop();
+  claudeServer();
   shEvents();
   globalShortcut.register('Control+Alt+Space', () => send('toggle'));
   screen.on('display-metrics-changed', placeWindow);

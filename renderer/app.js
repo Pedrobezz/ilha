@@ -565,6 +565,35 @@ window.ilha.onConn(c => {
 });
 setInterval(() => { if (S.open && S.tab === 'net') renderHistory(); }, 30000);
 
+// avisos do Claude Code: terminou, pediu permissão ou está esperando você
+NOTE_IC.claude = '<svg viewBox="0 0 24 24"><path d="M12 2.5v19M2.5 12h19M5.3 5.3l13.4 13.4M18.7 5.3 5.3 18.7" stroke-width="2.6"/></svg>';
+const CLAUDE_C = '#d97757';
+function claudeMsg(m) {
+  const tool = /permission to use (.+)$/i.exec(m)?.[1];
+  if (tool) return `Quer permissão para usar ${tool}`;
+  if (/waiting for your input/i.test(m)) return 'Está esperando sua resposta';
+  if (/needs your (attention|approval)/i.test(m)) return 'Precisa da sua atenção';
+  return m || 'Precisa de você';
+}
+window.ilha.onClaude(c => {
+  if (S.cfg.liveAlerts === false) return;
+  const where = c.project ? ` · ${c.project}` : '';
+  if (c.event === 'Stop') { notice('claude', CLAUDE_C, 'Claude', `Terminou${where}`, 5000); softChime(); return; }
+  const perm = c.type === 'permission_prompt' || /permission|approval/i.test(c.message);
+  if (perm) {
+    chime();
+    showAlert('Claude precisa de você', `${claudeMsg(c.message)}${where}`, `<span style="color:${CLAUDE_C}">${NOTE_IC.claude}</span>`);
+  } else notice('claude', CLAUDE_C, 'Claude', `${claudeMsg(c.message)}${where}`, 6000);
+});
+function softChime() {
+  try {
+    const ac = new AudioContext(), o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = 1046.5;
+    g.gain.setValueAtTime(0, ac.currentTime); g.gain.linearRampToValueAtTime(.08, ac.currentTime + .02); g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + .6);
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + .65);
+  } catch (_) {}
+}
+
 // SmartHouse ao vivo: regras que dispararam
 window.ilha.onShLog(l => {
   const m = /^Regra "?(.+?)"? disparou/.exec(l.msg || '');
