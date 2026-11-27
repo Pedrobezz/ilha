@@ -1279,6 +1279,9 @@ function renderDevRings() {
 const devLabel = d => d.kind === 'headset' ? 'Fone' : d.kind === 'mouse' ? 'Mouse' : isKeyboard(d.name) ? 'Teclado' : d.name;
 const devIcon = d => d.kind === 'headset' ? DEV_IC.headset : d.kind === 'mouse' ? DEV_IC.mouse : isKeyboard(d.name) ? DEV_IC.keyboard : DEV_IC.other;
 const warned = {}; // por aparelho: { 20: true, 10: true } — cada nível avisa uma vez até carregar de novo
+// última vez que cada aparelho apareceu: mouse e fone sem fio entram em repouso e "somem" da leitura,
+// e ao voltar não são uma conexão nova. Só avisa se nunca apareceu ou ficou sumido por mais de 30 min.
+const seenAt = {}, RECONNECT_QUIET = 30 * 60e3;
 function onPeripherals(list) {
   const prevList = S.btBat || [], prev = new Map(prevList.map(d => [d.name, d]));
   const first = S.btBat === undefined;
@@ -1287,9 +1290,11 @@ function onPeripherals(list) {
   if (bt[0]) { $('#ql-bt').textContent = `${isKeyboard(bt[0].name) ? 'Teclado' : bt[0].name.split(' ')[0]} ${bt[0].battery}% ›`; $('#ql-bt').title = bt.map(d => `${d.name}: ${d.battery}%`).join('\n') + '\nClique para ver os dispositivos'; }
   else { $('#ql-bt').textContent = 'Bluetooth ›'; $('#ql-bt').title = 'Ver os dispositivos Bluetooth'; }
   renderDevRings();
+  const now = Date.now();
   for (const d of list) {
     const p = prev.get(d.name), w = (warned[d.name] = warned[d.name] || {});
-    if (!first && !p) notice('head', '#0a84ff', devLabel(d), `${d.name} conectado · ${d.battery}%`, 4000);
+    const last = seenAt[d.name]; seenAt[d.name] = now;
+    if (!first && !p && (!last || now - last > RECONNECT_QUIET)) notice('head', '#0a84ff', devLabel(d), `${d.name} conectado · ${d.battery}%`, 4000);
     // começou ou parou de carregar
     if (p && p.charging !== d.charging) {
       if (d.charging) notice('bolt', '#30d158', `${devLabel(d)} carregando`, `${d.battery}%`, 3500);

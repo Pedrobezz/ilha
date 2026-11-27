@@ -974,3 +974,19 @@ body.dragging .drop-hint { opacity: 1; }
 .set-cols { overflow-y: auto; scrollbar-width: none; padding-bottom: 6px; }
 .set-cols::-webkit-scrollbar { display: none; }
 .set-cols { align-items: start; }
+
+/* ================= economia de memória e GPU =================
+   Animações infinitas fazem o Chromium recalcular estilo a cada quadro, mesmo quando o elemento está
+   invisível (opacity 0 / visibility hidden). Com a ilha sempre aberta, isso enchia o heap do Blink
+   (centenas de MB). Aqui cada animação só roda quando está de fato na tela. */
+/* abas: só a aba aberta, e só com a ilha expandida */
+#island:not(.expanded) .pages *, .page:not(.on) * { animation: none !important; }
+/* mascote passeando na ilha compacta: só quando o Claude está trabalhando (classe walk) */
+#island:not(.walk) #isl-lane, #island:not(.walk) #isl-lane * { animation: none !important; }
+/* mascote da aba Claude: andando só com .working, dormindo só com .sleeping */
+.cl-now:not(.working) .cl-lane .mascot, .cl-now:not(.working) .cl-lane .mascot * { animation: none !important; }
+.cl-now:not(.sleeping) .mascot-sleep * { animation: none !important; }
+/* conteúdo da ilha compacta (equalizador etc.) só com ela compacta */
+#island:not(.compact) #compact * { animation: none !important; }
+/* escondida atrás de janela maximizada, vídeo ou jogo em tela cheia: nada anima */
+#island.hidden-top, #island.hidden-top * { animation: none !important; }
